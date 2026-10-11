@@ -1,7 +1,44 @@
 version: "3"
 
 tasks:
+  answers:
+    desc: Build the answer files for the default config (result-answers/answers)
+    cmds:
+      - nix build .#pve-answers --out-link result-answers
+
+  isos:
+    desc: Build the prepared ISOs for the default config (result-isos/isos)
+    cmds:
+      - nix build .#pve-isos --out-link result-isos
+
+  build:
+    desc: Build both answer files and prepared ISOs
+    cmds:
+      - task: answers
+      - task: isos
+
+  check:
+    desc: Validate answers and ISOs with the PVE tools (validate-answer, inspect-iso)
+    cmds:
+      - nix flake check
+
+  run:
+    desc: |
+      Run the CLI against a config module. Examples:
+        task run -- config/example.nix --answers-only
+        task run -- ./hosts.nix -H pve01
+      Full flag list: nix run . -- --help
+    cmds:
+      - nix run . -- {{.CLI_ARGS}}
+
+  clean:
+    desc: Remove build output symlinks and CLI results
+    cmds:
+      - rm -f result result-answers result-isos
+      - rm -rf pve-result
+
   ci:
+    desc: Lint, format, and secret-scan (also runs as the pre-commit hook)
     cmds:
       - gitleaks git --redact --staged
       - gitleaks git --redact

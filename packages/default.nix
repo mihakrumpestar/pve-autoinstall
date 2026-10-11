@@ -14,6 +14,11 @@
 }:
 let
   eval = lib.evalModules {
+    specialArgs = {
+      # Locale value sets (keyboard/country/timezone) derived from the same
+      # sources PVE uses, so bad values fail here at evaluation.
+      locales = import ../lib/locales.nix { inherit pkgs lib; };
+    };
     modules = [
       ../modules/schema.nix
       config

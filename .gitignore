@@ -6,6 +6,7 @@ config/default.nix
 # Build outputs
 result
 result-*
+pve-result
 
 # devenv
 .devenv/

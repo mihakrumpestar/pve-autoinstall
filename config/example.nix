@@ -4,6 +4,9 @@
   hosts = [
     {
       name = "pve01";
+      keyboard = "en-us";
+      country = "us";
+      timezone = "UTC";
       fqdn = "pve01.example.tld";
       cidr = "192.168.10.11/24";
       dns = "192.168.10.1";
@@ -27,6 +30,9 @@
     }
     {
       name = "pve02";
+      keyboard = "en-us";
+      country = "us";
+      timezone = "UTC";
       fqdn = "pve02.example.tld";
       cidr = "192.168.10.12/24";
       dns = "192.168.10.1";
@@ -48,6 +54,9 @@
     }
     {
       name = "pve03";
+      keyboard = "en-us";
+      country = "us";
+      timezone = "UTC";
       fqdn = "pve03.example.tld";
       cidr = "192.168.10.13/24";
       dns = "192.168.10.1";

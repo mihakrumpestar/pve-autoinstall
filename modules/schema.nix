@@ -1,6 +1,10 @@
 {
   config,
   lib,
+  # Locale value sets (keyboard/country/timezone) derived from the sources PVE
+  # itself uses; supplied by ../packages/default.nix so this module stays free
+  # of nixpkgs coupling.
+  locales,
   ...
 }:
 {
@@ -17,21 +21,21 @@
 
             # [global] section, in render order.
             keyboard = lib.mkOption {
-              type = lib.types.str;
-              default = "si";
-              description = "Keyboard layout.";
+              type = lib.types.nullOr (lib.types.enum locales.keyboardLayouts);
+              default = null;
+              description = "PVE keyboard layout (required; PVE has no answer-file default).";
             };
 
             country = lib.mkOption {
-              type = lib.types.str;
-              default = "si";
-              description = "Two-letter country code.";
+              type = lib.types.nullOr (lib.types.strMatching locales.countryPattern);
+              default = null;
+              description = "ISO 3166-1 alpha-2 country code, lowercase (required; PVE has no answer-file default).";
             };
 
             timezone = lib.mkOption {
-              type = lib.types.str;
-              default = "Europe/Ljubljana";
-              description = "Timezone.";
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Canonical tzdata zone, e.g. Europe/Vienna or UTC (required; PVE has no answer-file default).";
             };
 
             fqdn = lib.mkOption {
@@ -172,6 +176,16 @@
         ]
         ++ lib.optionals (host.diskList == [ ]) [
           "host ${host.name}: diskList must name the root disk(s)"
+        ]
+        ++ map (opt: "host ${host.name}: ${opt} is required (PVE has no answer-file default)") (
+          lib.filter (opt: host.${opt} == null) [
+            "keyboard"
+            "country"
+            "timezone"
+          ]
+        )
+        ++ lib.optionals (host.timezone != null && !(lib.elem host.timezone locales.timezones)) [
+          "host ${host.name}: timezone '${host.timezone}' is not a valid tzdata zone (use e.g. Europe/Vienna, or UTC)"
         ]
       ) config.hosts
       ++ (

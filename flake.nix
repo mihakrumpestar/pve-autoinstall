@@ -4,7 +4,11 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      ...
+    }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -29,6 +33,8 @@
         inherit (pveIso) url hash;
       };
 
+      # Canonical factory: renders a typed config module into per-host answers,
+      # prepared ISOs, bundle dirs and PVE-tool checks.
       mkPve =
         args:
         import ./packages (
@@ -50,12 +56,22 @@
       default = mkPve { config = defaultConfig; };
     in
     {
-      inherit mkPve pveIso;
+      # Canonical consumer entrypoint; also what the CLI resolves via the flake.
+      # pveIso lives under lib so `nix flake check` does not warn about an
+      # unknown top-level output.
+      lib = {
+        inherit pveIso mkPve;
+      };
 
       packages.${system} = {
         pve-answers = default.answersDir;
         pve-isos = default.isosDir;
         default = default.isosDir;
+      };
+
+      apps.${system}.default = import ./packages/cli.nix {
+        inherit pkgs lib pveIso;
+        flakeSrc = self.outPath;
       };
 
       checks.${system} = default.checks;
