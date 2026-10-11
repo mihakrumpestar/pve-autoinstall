@@ -1,0 +1,12 @@
+# Real host configuration: contains root credentials, never commit it.
+# The flake auto-detects config/default.nix when present, else uses
+# config/example.nix.
+config/default.nix
+
+# Build outputs
+result
+result-*
+
+# devenv
+.devenv/
+.pre-commit-config.yaml

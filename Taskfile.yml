@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  ci:
+    cmds:
+      - gitleaks git --redact --staged
+      - gitleaks git --redact
+      - treefmt
+      - deadnix --fail
+      - statix check
+
+  update-inputs:
+    desc: |
+      Update flake inputs. Can also update a specific input with:
+      task update-inputs -- <input-name>
+    cmds:
+      - nix flake update --flake 'path:{{.ROOT_DIR}}' {{.CLI_ARGS}}
