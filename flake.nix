@@ -49,11 +49,14 @@
           // args
         );
 
-      # Real config lives in config/default.nix once it exists; the example
-      # config keeps the unit-test checks working until then.
-      defaultConfig =
-        if builtins.pathExists ./config/default.nix then ./config/default.nix else ./config/example.nix;
-      default = mkPve { config = defaultConfig; };
+      # The flake's `packages` and `checks` always use the committed example
+      # config: config/default.nix is gitignored, so it is never part of the
+      # flake source and must not be auto-detected (doing so would silently
+      # build the example with a throwaway password while the user believes
+      # their real config was used). Supply a real config via the CLI
+      # (`nix run . -- <config.nix>`) or by calling
+      # `lib.mkPve { config = ...; }`.
+      default = mkPve { config = ./config/example.nix; };
     in
     {
       # Canonical consumer entrypoint; also what the CLI resolves via the flake.
@@ -75,5 +78,8 @@
       };
 
       checks.${system} = default.checks;
+
+      # `nix fmt` uses the same treefmt/nixfmt setup as devenv.nix.
+      formatter.${system} = pkgs.nixfmt-tree;
     };
 }

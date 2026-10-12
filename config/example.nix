@@ -1,9 +1,8 @@
 # Example configuration for the pve-autoinstall generator (unit tests).
 # Copy to config/default.nix and fill with real values for real deployments.
 {
-  hosts = [
-    {
-      name = "pve01";
+  hosts = {
+    pve01 = {
       keyboard = "en-us";
       country = "us";
       timezone = "UTC";
@@ -27,9 +26,8 @@
           name = "lan1";
         }
       ];
-    }
-    {
-      name = "pve02";
+    };
+    pve02 = {
       keyboard = "en-us";
       country = "us";
       timezone = "UTC";
@@ -51,9 +49,8 @@
           name = "lan1";
         }
       ];
-    }
-    {
-      name = "pve03";
+    };
+    pve03 = {
       keyboard = "en-us";
       country = "us";
       timezone = "UTC";
@@ -75,6 +72,6 @@
           name = "lan1";
         }
       ];
-    }
-  ];
+    };
+  };
 }

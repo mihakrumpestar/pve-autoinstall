@@ -2,17 +2,15 @@
 
 Nix flake that turns typed Nix configuration into Proxmox VE autoinstall answer files and prepared ISOs (answer embedded, `--fetch-from iso`).
 
-The configuration is a Nix module (`modules/schema.nix`): values are self-validating (types check CIDR/MAC/mailto format, keyboard layout, country code, and timezone, and enums restrict filesystem and raid levels), and module assertions enforce the rest (exactly one password variant, disk list present, required keyboard/country/timezone, unique host names). Locale value sets are derived from the sources PVE uses (`lib/locales.nix`). The generated TOML and the built ISOs are validated with the PVE-supplied tools (`validate-answer`, `inspect-iso`); there are no hand-rolled schema checks. The end-to-end workflow is documented in the infrastructure repo's `pve/autoinstall.md` (single source of truth for structure); this package automates the render/validate/build steps.
+The configuration is a Nix module (`modules/schema.nix`): values are self-validating (types check CIDR/MAC/mailto format, keyboard layout, country code, and timezone, and enums restrict filesystem and raid levels), and module assertions enforce the rest (exactly one password variant, disk list present, required keyboard/country/timezone, a dotted `fqdn`). Locale value sets are derived from the sources PVE uses (`lib/locales.nix`). The generated TOML and the built ISOs are validated with the PVE-supplied tools (`validate-answer`, `inspect-iso`); there are no hand-rolled schema checks. The end-to-end workflow is documented in the infrastructure repo's `pve/autoinstall.md` (single source of truth for structure); this package automates the render/validate/build steps.
 
-## Options (per host, in `hosts = [ ... ]`)
+## Options (per host, in `hosts = { <name> = { ... }; }`)
 
-Each entry in `hosts` describes one host. Options are grouped by the TOML section they render into; order here (and in `modules/schema.nix`) follows that order.
+`hosts` is an attrset keyed by host name; each value describes one host. The key names the output files (`answers/<name>.toml`, `isos/<name>.iso`). Options are grouped by the TOML section they render into; order here (and in `modules/schema.nix`) follows that order.
 
 ### Identity
 
-| Option | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `name` | `^[a-z][a-z0-9-]*$` | required | short host name; used for output naming only, not rendered |
+The host key (`hosts.<name>`) is the identity and names the output files. It is not rendered into the TOML; the system hostname comes from `fqdn` (see `[global]` below).
 
 ### `[global]`
 
@@ -20,9 +18,9 @@ Each entry in `hosts` describes one host. Options are grouped by the TOML sectio
 | --- | --- | --- | --- |
 | `keyboard` | one of 25 PVE layouts | required | e.g. `en-us`, `de-ch`, `pt-br` (full list below) |
 | `country` | `^[a-z]{2}$` | required | ISO 3166-1 alpha-2, lowercase (e.g. `us`, `at`) |
-| `timezone` | tzdata zone | required | canonical tzdata zone (e.g. `Europe/Vienna`) or `UTC` |
-| `fqdn` | string | required | domain part becomes the search domain |
+| `fqdn` | FQDN (dotted) | required | PVE sets the hostname from the first label and the domain from the rest (written to `/etc/hostname` + `/etc/hosts`); a bare hostname with no domain is rejected |
 | `mailto` | email | required | root mail target |
+| `timezone` | tzdata zone | required | canonical tzdata zone (e.g. `Europe/Vienna`) or `UTC` |
 | `rootPassword` | string or null | null | plain `root-password`; set exactly one of the two password options |
 | `rootPasswordHashed` | string or null | null | `root-password-hashed` (e.g. `mkpasswd -m yescrypt`) |
 | `sshKeys` | list of strings | `[ ]` | root `authorized_keys` entries |
@@ -43,17 +41,17 @@ Each entry in `hosts` describes one host. Options are grouped by the TOML sectio
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `pinning.enabled` | bool | `true` | |
-| `pinning.mappings` | list of `{ mac; name; }` | `[ ]` | MAC to name pairs; first entry should be the boot NIC; omit for deterministic auto-pinned `nic0/nic1/...`; MACs render lowercase |
+| `pinning.mappings` | list of `{ mac; name; }` | `[ ]` | MAC to name pairs; when pinning is enabled the list must include the boot NIC MAC (conventionally first); omit the list for deterministic auto-pinned `nic0/nic1/...`; MACs render lowercase |
 
 ### `[disk-setup]`
 
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `filesystem` | `zfs`/`ext4`/`xfs`/`btrfs` | `"zfs"` | |
-| `zfsRaid` | `single`/`mirror`/`raid0`/`raid1`/`raid10`/`raidz1`/`raidz2`/`raidz3` | `"raid0"` | only used when `filesystem = "zfs"` |
+| `zfsRaid` | `raid0`/`raid1`/`raid10`/`raidz-1`/`raidz-2`/`raidz-3` | `"raid0"` | only used when `filesystem = "zfs"`; `raid1`/`raid10`/`raidz-1`/`raidz-2`/`raidz-3` require at least 2/4/3/4/5 disks |
 | `diskList` | list of strings | required | target root disks; confirm per host with `device-info -t disk` |
 
-Assertions fail at evaluation with a message: exactly one of `rootPassword`/`rootPasswordHashed`, non-empty `diskList`, unique host names, required `keyboard`/`country`/`timezone`, a `timezone` present in tzdata, and all type formats above.
+Assertions fail at evaluation with a message: at least one host; exactly one of `rootPassword`/`rootPasswordHashed`; non-empty `diskList` with no duplicate disks; required `keyboard`/`country`/`timezone`; `timezone` present in tzdata; a dotted `fqdn`; `zfsRaid` only set when `filesystem = "zfs"`; the per-level minimum disk count; and, when pinning is enabled with mappings, that they include the boot NIC MAC and have unique MACs and names. All type formats above are enforced by the module system.
 
 ## Password policy
 
@@ -91,6 +89,13 @@ Options:
 | `-H, --host NAME` | Restrict to one host (repeatable) |
 | `--list` | Print host names from the config and exit |
 | `--no-check` | Skip per-host validation checks |
+| `-h, --help` | Show usage and the pinned PVE ISO version |
+
+For example, build only the answer files for one host from a real config:
+
+```sh
+pve-autoinstall ./hosts.nix --answers-only -H pve01 -o ./out
+```
 
 Validation runs by default: answer files through PVE `validate-answer`, ISOs through `inspect-iso`, mirroring `nix flake check`.
 
@@ -116,9 +121,11 @@ Add pve-autoinstall as an input, call `lib.mkPve` with your config module (path 
 ```nix
 packages.x86_64-linux.pve-isos = (pve-autoinstall.lib.mkPve {
   config = {
-    hosts = [
-      {
-        name = "pve01";
+    hosts = {
+      pve01 = {
+        keyboard = "en-us";
+        country = "us";
+        timezone = "UTC";
         fqdn = "pve01.example.tld";
         cidr = "192.168.10.11/24";
         dns = "192.168.10.1";
@@ -127,8 +134,8 @@ packages.x86_64-linux.pve-isos = (pve-autoinstall.lib.mkPve {
         mailto = "admin@example.tld";
         rootPassword = "changeme";
         diskList = [ "sda" ];
-      }
-    ];
+      };
+    };
   };
 }).isosDir;
 ```
@@ -143,13 +150,49 @@ and run `nix run .#pve-autoinstall -- ./hosts.nix`.
 
 ### Inside this flake's checkout
 
-The default config (`config/default.nix` if it exists, else `config/example.nix`) is exposed as packages:
+The committed example config (`config/example.nix`) is exposed as packages (`config/default.nix` is gitignored and never part of the flake source):
 
 ```sh
 nix build .#pve-answers   # answers/<host>.toml
 nix build .#pve-isos      # isos/<host>.iso
 nix flake check .         # validate-answer + inspect-iso per host
 ```
+
+## Flake outputs
+
+`lib`:
+- `lib.mkPve { config = ...; }` renders a config module (path or attrset) into per-host answers, prepared ISOs, bundle dirs, and PVE-tool checks. It returns `answers`, `isos`, `answersDir`, `isosDir`, `checks`, `checksForHosts`, and the evaluated `config`.
+- `lib.pveIso` is the pinned PVE ISO (`{ version, url, hash }`); see ISO pin.
+
+`packages.<system>` (always the committed `config/example.nix`):
+- `pve-answers`: bundle dir with `answers/<host>.toml`.
+- `pve-isos`: bundle dir with `isos/<host>.iso`.
+- `default`: alias for `pve-isos`.
+
+`apps.<system>.default`: the `pve-autoinstall` CLI.
+
+`checks.<system>`: per host, `pve-answer-validates-<host>` (runs `validate-answer`) and `pve-iso-is-autoinstall-<host>` (runs `inspect-iso`); plus `pve-render-golden` (exact rendered TOML for representative configs) and one `pve-rejects-<case>` per invalid fixture (each must fail validation). See `config/fixtures.nix`.
+
+`formatter.<system>`: `nixfmt-tree`, so `nix fmt` matches the devenv formatting.
+
+## Tasks
+
+`Taskfile.yml` wraps the common workflows:
+
+| Task | Effect |
+| --- | --- |
+| `task answers` | Build the answer bundle (`nix build .#pve-answers`) into `result-answers`. |
+| `task isos` | Build the ISO bundle (`nix build .#pve-isos`) into `result-isos`. |
+| `task build` | Run `answers`, then `isos`. |
+| `task check` | Run `nix flake check`, which builds and validates the prepared ISOs (not just a lint). |
+| `task run` | Run the CLI against a config, e.g. `task run -- config/example.nix --answers-only`. |
+| `task clean` | Remove the build out-links (`result`, `result-answers`, `result-isos`) and `pve-result`. |
+| `task ci` | Lint, format, and secret-scan (also the pre-commit hook). |
+| `task update-inputs` | Update flake inputs, or one input with `task update-inputs -- <name>`. |
+
+## Development shell
+
+`devenv.nix` provides a dev shell with `deadnix`, `flake-checker`, `go-task`, `gitleaks`, `nixfmt-tree`, `statix`, `proxmox-auto-install-assistant`, and `xorriso`. On shell entry devenv installs a git pre-commit hook that runs `task ci`.
 
 ## ISO pin
 

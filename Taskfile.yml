@@ -42,7 +42,7 @@ tasks:
     cmds:
       - gitleaks git --redact --staged
       - gitleaks git --redact
-      - treefmt
+      - treefmt --fail-on-change
       - deadnix --fail
       - statix check
 

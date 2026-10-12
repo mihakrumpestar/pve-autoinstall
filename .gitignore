@@ -1,6 +1,7 @@
 # Real host configuration: contains root credentials, never commit it.
-# The flake auto-detects config/default.nix when present, else uses
-# config/example.nix.
+# config/default.nix is gitignored and never part of the flake source; the
+# flake always builds config/example.nix. Supply a real config via the CLI
+# (`nix run . -- <config.nix>`) or `lib.mkPve { config = ...; }`.
 config/default.nix
 
 # Build outputs
