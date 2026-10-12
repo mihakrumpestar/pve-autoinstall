@@ -1,7 +1,13 @@
-# Example configuration for the pve-autoinstall generator (unit tests).
+# Example configuration for the pve-autoinstall generator.
 # Copy to config/default.nix and fill with real values for real deployments.
+#
+# rootPasswordHashed is a crypt(3) hash (mkpasswd -m yescrypt or
+# openssl passwd -6). Plain rootPassword is available but discouraged: a
+# plaintext password would be embedded verbatim in the answer file and ISO.
+# The hash below is a documented throwaway, not a real credential.
 {
   hosts = {
+    # zfs raid1 across two disks.
     pve01 = {
       keyboard = "en-us";
       country = "us";
@@ -12,10 +18,13 @@
       gateway = "192.168.10.1";
       bootMac = "AA:BB:CC:DD:EE:01";
       mailto = "admin@example.tld";
-      # example only; use rootPasswordHashed for real hosts and reset after
-      # deploy
-      rootPassword = "changeme";
-      diskList = [ "sda" ];
+      rootPasswordHashed = "$y$j9T$Xk9vXq0h0e9XoY3q$0QOGR4mS4H.j7v0rVZScMB.HoS.5iN7dR2FhV6s3Z8";
+      filesystem = "zfs";
+      zfsRaid = "raid1";
+      diskList = [
+        "sda"
+        "sdb"
+      ];
       pinning.mappings = [
         {
           mac = "AA:BB:CC:DD:EE:01";
@@ -27,6 +36,7 @@
         }
       ];
     };
+    # ext4 on a single disk.
     pve02 = {
       keyboard = "en-us";
       country = "us";
@@ -37,7 +47,8 @@
       gateway = "192.168.10.1";
       bootMac = "AA:BB:CC:DD:EE:11";
       mailto = "admin@example.tld";
-      rootPassword = "changeme";
+      rootPasswordHashed = "$6$pveAutoInstall$0QOGR4mS4H.j7v0rVZScMB.HoS.5iN7dR2FhV6s3Z8";
+      filesystem = "ext4";
       diskList = [ "sda" ];
       pinning.mappings = [
         {
@@ -50,6 +61,7 @@
         }
       ];
     };
+    # btrfs raid1 across two disks.
     pve03 = {
       keyboard = "en-us";
       country = "us";
@@ -60,8 +72,13 @@
       gateway = "192.168.10.1";
       bootMac = "AA:BB:CC:DD:EE:21";
       mailto = "admin@example.tld";
-      rootPassword = "changeme";
-      diskList = [ "sda" ];
+      rootPasswordHashed = "$y$j9T$Xk9vXq0h0e9XoY3q$0QOGR4mS4H.j7v0rVZScMB.HoS.5iN7dR2FhV6s3Z8";
+      filesystem = "btrfs";
+      btrfsRaid = "raid1";
+      diskList = [
+        "sda"
+        "sdb"
+      ];
       pinning.mappings = [
         {
           mac = "AA:BB:CC:DD:EE:21";

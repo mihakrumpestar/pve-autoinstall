@@ -3,25 +3,20 @@
 # rules), then produces per-host answer files, prepared ISOs, bundle dirs and
 # PVE-tool checks.
 #
-# It also exposes non-vacuous flake checks (a golden render assertion plus
-# build-time rejection cases) driven by ../config/fixtures.nix, so schema and
-# renderer regressions fail `nix flake check` instead of shipping silently.
+# Non-vacuous render/reject flake checks live in ./tests.nix so this factory
+# stays focused on building artifacts; the flake wires both together.
 {
   pkgs,
   lib,
   pveIso,
   srcIso,
-  # Module: path to a config file or an attrset; see ../config/example.nix
-  # for the shape and ../modules/schema.nix for options. The default is the
-  # committed example config: the flake's `packages`/`checks` always build
-  # that example because config/default.nix is gitignored and therefore never
-  # part of the flake source. A real config is supplied via the CLI
-  # (`nix run . -- <config.nix>`) or by a consumer calling
-  # `lib.mkPve { config = ...; }`.
+  # Module: path to a config file or an attrset; see ../config/example.nix for
+  # the shape and ../modules/schema.nix for options. Defaults to the committed
+  # example config (why: see the comment in flake.nix).
   config ? ../config/example.nix,
 }:
 let
-  # Single source of truth for evaluating a config module against the schema.
+  # Evaluating a config module against the schema, kept in one place.
   evalConfig =
     cfg:
     lib.evalModules {
@@ -37,7 +32,7 @@ let
     };
 
   # Evaluate `cfg` and throw the aggregated assertion messages if invalid.
-  # Used by the main path and by the build-time rejection checks below.
+  # Used by the main path and by the build-time rejection checks.
   validate =
     cfg:
     let
@@ -62,6 +57,9 @@ let
           proxmox-auto-install-assistant
           xorriso
         ];
+        # Best-effort determinism; xorriso/prepare-iso may still embed
+        # timestamps in the generated ISO.
+        SOURCE_DATE_EPOCH = "0";
       }
       ''
         export TMPDIR=$NIX_BUILD_TOP/tmp
@@ -103,7 +101,11 @@ let
 
   answerCheck =
     host:
-    pkgs.runCommand "pve-answer-validates-${host}" { } ''
+    pkgs.runCommand "${answerCheckPrefix}${host}" { } ''
+      # validate-answer returns rc 0 even on issues, so the check relies on
+      # the "parsed successfully" line; pipefail makes a hard tool failure
+      # (bad invocation) fail the check too.
+      set -o pipefail
       ${assistant} validate-answer ${answers.${host}} \
         | tee validate.log | grep -q "parsed successfully"
       touch $out
@@ -111,100 +113,57 @@ let
 
   isoCheck =
     host:
-    pkgs.runCommand "pve-iso-is-autoinstall-${host}"
-      {
-        # Only runs `inspect-iso`; xorriso is needed solely to build an ISO.
-        nativeBuildInputs = with pkgs; [
-          proxmox-auto-install-assistant
-        ];
-      }
-      ''
-        ${assistant} inspect-iso ${isos.${host}} \
-          | tee inspect.log
-        grep -q "Auto-install:.*enabled" inspect.log
-        grep -q "Fetch mode:.*iso$" inspect.log
-        grep -q "Embedded answer file" inspect.log
-        touch $out
-      '';
+    pkgs.runCommand "${isoCheckPrefix}${host}" { } ''
+      ${assistant} inspect-iso ${isos.${host}} \
+        | tee inspect.log
+      grep -q "Auto-install:.*enabled" inspect.log
+      grep -q "Fetch mode:.*iso$" inspect.log
+      grep -q "Embedded answer file" inspect.log
+      touch $out
+    '';
 
-  # Single source of truth for the per-host check-name contract
-  # (`pve-answer-validates-<host>` / `pve-iso-is-autoinstall-<host>`); exposed
-  # so consumers such as the CLI never hardcode those names.
-  checksForHosts =
-    hostNames:
+  # Per-host check-name contract: one prefix per check kind, kept in one place.
+  answerCheckPrefix = "pve-answer-validates-";
+  isoCheckPrefix = "pve-iso-is-autoinstall-";
+
+  # Build only the checks `mode` requests, straight from the constructors
+  # above: "answers" builds validate-answer checks only, "isos" only
+  # inspect-iso checks, anything else ("all") both.
+  checksForMode =
+    hosts: mode:
     lib.listToAttrs (
-      lib.concatMap (host: [
-        {
-          name = "pve-answer-validates-${host}";
+      lib.concatMap (
+        host:
+        lib.optional (mode != "isos") {
+          name = "${answerCheckPrefix}${host}";
           value = answerCheck host;
         }
-        {
-          name = "pve-iso-is-autoinstall-${host}";
+        ++ lib.optional (mode != "answers") {
+          name = "${isoCheckPrefix}${host}";
           value = isoCheck host;
         }
-      ]) hostNames
+      ) hosts
     );
 
-  fixtures = import ../config/fixtures.nix;
+  # Both check kinds per host; the documented `checksForHosts` API, built from
+  # the same constructor as selectChecks.
+  checksForHosts = hosts: checksForMode hosts "all";
 
-  # Render every host of a VALID fixture config through the real renderer, so
-  # defaults are applied exactly as in production.
-  renderFixture = cfg: map renderAnswer (lib.attrValues (validate cfg).config.hosts);
+  # Subset of the per-host checks matching what a caller built: "answers"
+  # keeps only validate-answer checks, "isos" only inspect-iso checks, "all"
+  # keeps everything. Lets the CLI avoid forcing artifacts it did not build.
+  selectChecks =
+    {
+      hosts ? hostNames,
+      mode ? "all",
+    }:
+    checksForMode hosts mode;
 
-  # Shell snippets asserting a literal line is present/absent in a file.
-  # escapeShellArg keeps the exact rendered bytes (quotes, backslashes) intact.
-  assertPresent =
-    file: line:
-    "grep -qF -- ${lib.escapeShellArg line} ${file} || { echo ${lib.escapeShellArg "pve-render-golden: MISSING expected line: ${line}"} >&2; exit 1; }\n";
-  assertAbsent =
-    file: line:
-    "if grep -qF -- ${lib.escapeShellArg line} ${file}; then echo ${lib.escapeShellArg "pve-render-golden: FORBIDDEN line present: ${line}"} >&2; exit 1; fi\n";
-
-  # Golden render check: exact rendered TOML lines for representative valid
-  # fixtures (pinning, TOML escaping, zfs/ext4, hashed password).
-  golden = pkgs.runCommand "pve-render-golden" { } (
-    lib.concatMapStrings (
-      c:
-      let
-        file = pkgs.writeText "pve-render-golden-${c.name}.toml" (builtins.head (renderFixture c.cfg));
-      in
-      lib.concatMapStrings (l: assertPresent file l) c.present
-      + lib.concatMapStrings (l: assertAbsent file l) c.absent
-    ) fixtures.golden
-    + ''
-      echo "pve-render-golden: all golden render assertions passed"
-      touch $out
-    ''
-  );
-
-  # Rejection checks run at build time: `validate` is wrapped in tryEval, so a
-  # fixture that should be rejected produces a failing derivation (not an
-  # evaluation error), and one wrongly accepted makes the build fail loudly.
-  rejects =
-    name: cfg:
-    pkgs.runCommand "pve-rejects-${name}" { } (
-      if (builtins.tryEval (builtins.deepSeq (validate cfg).config true)).success then
-        ''
-          echo 'ERROR: config "${name}" was accepted but should be rejected' >&2
-          exit 1
-        ''
-      else
-        "touch $out"
-    );
-
-  checks =
-    checksForHosts hostNames
-    // {
-      pve-render-golden = golden;
-    }
-    // (lib.listToAttrs (
-      map (c: lib.nameValuePair "pve-rejects-${c.name}" (rejects c.name c.cfg)) fixtures.reject
-    ));
+  # Per-host checks only; the render/reject checks live in ./tests.nix.
+  checks = checksForHosts hostNames;
 in
 {
   inherit (eval) config;
-  # `lib` is exposed so consumers (the CLI) can filter the checks.
-  inherit lib;
   inherit
     answers
     isos
@@ -212,5 +171,9 @@ in
     isosDir
     checks
     checksForHosts
+    selectChecks
+    evalConfig
+    validate
+    renderAnswer
     ;
 }

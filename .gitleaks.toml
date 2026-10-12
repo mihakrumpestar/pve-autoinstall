@@ -1,0 +1,14 @@
+# Gitleaks config. `[extend] useDefault = true` is required: providing a config
+# file replaces the built-in rules unless defaults are re-enabled. `config/`
+# holds only committed example/fixture configs (the real config/default.nix is
+# gitignored and never scanned), so their throwaway passwords, hashes and MAC
+# addresses are not real secrets. The allowlist is path-scoped, not rule-wide,
+# so real secrets anywhere else are still detected.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway credentials in committed example/fixture configs"
+paths = [
+  '''config/.*\.nix$''',
+]

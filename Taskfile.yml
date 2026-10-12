@@ -18,7 +18,10 @@ tasks:
       - task: isos
 
   check:
-    desc: Validate answers and ISOs with the PVE tools (validate-answer, inspect-iso)
+    desc: |
+      Authoritative validation: `nix flake check` builds the answers and the
+      prepared ISOs and runs the PVE tools (validate-answer, inspect-iso) plus
+      the render/reject checks. Needs network for the pinned PVE ISO.
     cmds:
       - nix flake check
 
@@ -38,13 +41,39 @@ tasks:
       - rm -rf pve-result
 
   ci:
-    desc: Lint, format, and secret-scan (also runs as the pre-commit hook)
+    desc: |
+      Fast pre-commit gate (also the git hook): secret scan, format, lint and
+      flake.lock check. No ISO builds, so it stays quick.
     cmds:
       - gitleaks git --redact --staged
       - gitleaks git --redact
       - treefmt --fail-on-change
       - deadnix --fail
       - statix check
+      # flake-checker takes the flake.lock path positionally (not --flake).
+      - flake-checker --no-telemetry --fail-mode {{.ROOT_DIR}}/flake.lock
+
+  verify:
+    desc: "`ci` plus `check`."
+    deps:
+      - ci
+    cmds:
+      - nix flake check
+
+  test:
+    desc: |
+      Render/reject checks, the docs pattern check and CLI argument-parsing
+      tests. Does not build ISOs; `check` is the ISO-level validation.
+    cmds:
+      - nix build --no-link .#checks.x86_64-linux.pve-render-golden
+      - nix build --no-link .#checks.x86_64-linux.pve-host-key-pattern-consistent
+      # Reject-check names come from config/fixtures.nix; derive them so this
+      # never drifts from the fixtures.
+      - |
+        rejects=$(nix eval --raw .#checks.x86_64-linux \
+          --apply 'c: builtins.concatStringsSep " " (map (n: ".#checks.x86_64-linux." + n) (builtins.filter (n: builtins.match "pve-rejects-.*" n != null) (builtins.attrNames c)))')
+        if [ -n "$rejects" ]; then nix build --no-link $rejects; fi
+      - PVE_CLI="$(nix build --no-link --print-out-paths .#pve-autoinstall)/bin/pve-autoinstall" bats tests/cli.bats
 
   update-inputs:
     desc: |
@@ -52,3 +81,21 @@ tasks:
       task update-inputs -- <input-name>
     cmds:
       - nix flake update --flake 'path:{{.ROOT_DIR}}' {{.CLI_ARGS}}
+
+  update-iso:
+    desc: |
+      Repin the PVE ISO after a new release. Pass the new ISO URL to print the
+      SRI hash for the `pveIso` pin in flake.nix (bump `version` alongside the
+      hash; the URL is derived from `version`), or run with no URL for the
+      manual steps:
+        task update-iso -- https://enterprise.proxmox.com/iso/proxmox-ve_X.Y-Z.iso
+    cmds:
+      - |
+        url={{.CLI_ARGS}}
+        if [ -z "$url" ]; then
+          echo "usage: task update-iso -- <ISO URL>"
+          echo "manual: nix store prefetch-file --json --hash-type sha256 <URL>"
+          echo "then edit flake.nix pveIso: set version and hash (url is derived)"
+          exit 2
+        fi
+        nix store prefetch-file --json --hash-type sha256 "$url"

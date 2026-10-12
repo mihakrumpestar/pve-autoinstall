@@ -1,7 +1,7 @@
 # Render the PVE answer file for one host from the typed configuration
 # (see ../modules/schema.nix; the module system validates the values before
-# they reach this renderer). Structure mirrors the template in
-# /pve/autoinstall.md (single source of truth); keys are kebab-case.
+# they reach this renderer). Structure mirrors the template in the
+# infrastructure repo's pve/autoinstall.md; keys are kebab-case.
 lib: h:
 let
   # TOML basic-string escaping. Nix strings cannot contain NUL (U+0000), so
@@ -59,7 +59,7 @@ let
   # With the section present and enabled = true, PVE assigns nic0/nic1/... on
   # its own, so the header is always emitted when pinning is enabled; the
   # mapping table is emitted only when explicit mappings are configured.
-  pinningHeader = "\n[network.interface-name-pinning]\nenabled = true\n";
+  pinningHeader = "\n[network.interface-name-pinning]\nenabled = ${lib.boolToString h.pinning.enabled}\n";
   pinningMapping = "\n[network.interface-name-pinning.mapping]\n" + mappingLines;
   pinningTables =
     lib.optionalString h.pinning.enabled pinningHeader
@@ -72,6 +72,9 @@ let
   sshKeysLine =
     if h.sshKeys == [ ] then "root-ssh-keys = [ ]" else "root-ssh-keys = [ ${qlist h.sshKeys} ]";
   zfsRaidLine = lib.optionalString (h.filesystem == "zfs") "zfs.raid = ${q h.zfsRaid}";
+  # Only one of the two raid lines can be non-empty (filesystem is exclusive),
+  # so they share a template line to keep non-btrfs output byte-identical.
+  btrfsRaidLine = lib.optionalString (h.filesystem == "btrfs") "btrfs.raid = ${q h.btrfsRaid}";
 in
 ''
   [global]
@@ -94,7 +97,7 @@ in
   ${pinningTables}
   [disk-setup]
   filesystem = ${q h.filesystem}
-  ${zfsRaidLine}
+  ${zfsRaidLine}${btrfsRaidLine}
   # per host: keep the intended root disk, confirm the name with
   # proxmox-auto-install-assistant device-info -t disk
   disk-list = [ ${qlist h.diskList} ]

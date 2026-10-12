@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # cache-nix-action purges stale cache entries
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DO_NOT_TRACK: "1" # Tool telemetry opt-out
+
+jobs:
+  ci:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # gitleaks scans the full history; the default depth 1 would see only
+          # the pushed tip.
+          fetch-depth: 0
+
+      # devenv (devenv.yaml + devenv.lock) defines the toolchain in one place;
+      # the cachix substituter keeps its closure cacheable.
+      - uses: cachix/install-nix-action@v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            extra-substituters = https://devenv.cachix.org
+            extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
+
+      # Persist /nix across runs so the devenv environment is realized once per
+      # devenv.lock change instead of on every run. gc keeps the entry within
+      # the 10 GB repo quota; on main, stale entries of this family are purged
+      # after each save.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-lint-${{ hashFiles('devenv.yaml', 'devenv.lock', 'devenv.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-lint-
+          gc-max-store-size-linux: 2G
+          purge: ${{ github.ref == 'refs/heads/main' }}
+          purge-prefixes: nix-${{ runner.os }}-lint-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Install devenv.sh
+        run: nix profile add nixpkgs#devenv
+
+      # --profile ci: only the lint/format/test tool group (see devenv.nix)
+      - run: devenv --profile ci shell -- task ci
+
+      # Offline test path (render/reject checks and the CLI bats tests), so
+      # the CLI tests gate merges too.
+      - run: devenv --profile ci shell -- task test
+
+      # Fail if the CI tasks modified or created anything in the repo:
+      # run 'task ci' locally and commit the results.
+      - name: Verify clean working tree
+        run: |
+          if [ -n "$(git status --porcelain -unormal)" ]; then
+            echo "Error: repository changes detected:"
+            git status -unormal
+            exit 1
+          fi
+
+  nix-check:
+    name: Nix Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: cachix/install-nix-action@v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            extra-substituters = https://devenv.cachix.org
+            extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
+
+      # Same as above; this job's key also tracks the flake inputs.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-build-${{ hashFiles('devenv.yaml', 'devenv.lock', 'devenv.nix', 'flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-build-
+          gc-max-store-size-linux: 2G
+          purge: ${{ github.ref == 'refs/heads/main' }}
+          purge-prefixes: nix-${{ runner.os }}-build-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Install devenv.sh
+        run: nix profile add nixpkgs#devenv
+
+      # Authoritative validation: builds answers and prepared ISOs and runs the
+      # PVE tools plus the render/reject checks. Fetches the pinned PVE ISO.
+      - run: devenv --profile ci shell -- task check
