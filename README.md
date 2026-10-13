@@ -1,27 +1,46 @@
 # pve-autoinstall
 
-Nix flake that turns a typed Nix configuration into Proxmox VE autoinstall answer files (TOML) and prepared ISOs with the answer embedded (`--fetch-from iso`).
-
-Validation is layered: Nix types and assertions reject bad values at evaluation, using the same locale lists PVE uses (`lib/locales.nix`); the PVE tools `validate-answer` and `inspect-iso` own final validation of the rendered output. The end-to-end install workflow lives in the infrastructure repo's `pve/autoinstall.md`; this flake automates the render, validate and build steps.
+A CLI and Nix flake that turns a typed Nix configuration into Proxmox VE autoinstall answer files (TOML) and prepared ISOs with the answer embedded (`--fetch-from iso`).
 
 ## Quickstart
 
-Requirements: Nix with flakes enabled. Building ISOs needs network access to fetch the pinned PVE ISO and an x86_64-linux builder (see Flake outputs).
+Requirements: Nix with flakes enabled. Building ISOs needs network access to fetch the pinned PVE ISO and an `x86_64-linux` builder (see Flake outputs).
+
+**Write `hosts.nix`, then run it:**
+
+```nix config/minimal.nix
+# Minimal pve-autoinstall config: one host, required options only. Copy to
+# hosts.nix and adjust.
+{
+  hosts.pve01 = {
+    keyboard = "en-us";
+    country = "us";
+    timezone = "UTC";
+    fqdn = "pve01.example.tld"; # first label must equal the key
+    cidr = "192.168.10.11/24";
+    dns = "192.168.10.1";
+    gateway = "192.168.10.1";
+    bootMac = "AA:BB:CC:DD:EE:01";
+    mailto = "admin@example.tld";
+    rootPasswordHashed = "$y$j9T$Xk9vXq0h0e9XoY3q$0QOGR4mS4H.j7v0rVZScMB.HoS.5iN7dR2FhV6s3Z8"; # mkpasswd -m yescrypt
+    diskList = [ "sda" ]; # zfs raid0 (the defaults) on one disk
+  };
+}
+```
 
 ```sh
 nix run github:mihakrumpestar/pve-autoinstall -- ./hosts.nix
 ```
 
-That renders the TOML answer files, builds the prepared ISOs, and symlinks the results into `./pve-result` (override with `-o`): `answers/<host>.toml` and `isos/<host>.iso`. The results are `nix build` out-links into the Nix store, so they survive garbage collection. Validation runs by default, answer files through `validate-answer` and ISOs through `inspect-iso`, the same per-host checks as `nix flake check`.
+One entry per host; the key names the output files and must be `fqdn`'s first label (PVE takes the hostname from it). Everything not shown defaults: `filesystem = "zfs"`, `zfsRaid = "raid0"`, NIC names auto-pinned `nic0/nic1/...`.
 
-In this flake's own checkout, the committed example config (`config/example.nix`) is what the packages build:
+For a complete three-host config (zfs raid1, ext4, btrfs, interface pinning) see [config/example.nix](config/example.nix). Every option is listed in the Configuration reference below.
 
-```sh
-nix build .#pve-answers      # answers/<host>.toml
-nix build .#pve-isos         # isos/<host>.iso
-nix build .#pve-autoinstall  # the CLI
-nix flake check .            # validate-answer + inspect-iso per host, plus the render/reject and docs pattern checks
-```
+That renders the TOML answer files, builds the prepared ISOs with the answer embedded, and symlinks both into `./pve-result` (override with `-o`): `answers/<host>.toml` and `isos/<host>.iso`. Boot each ISO on its host.
+
+Validation runs by default (`validate-answer` on the answers, `inspect-iso` on the ISOs), the same per-host checks as `nix flake check`. The results are `nix build` out-links into the Nix store, so they survive garbage collection until you delete them.
+
+Only need the answers? `--answers-only` skips the ISO builds and the download; see the CLI section below.
 
 ## Configuration reference
 
@@ -107,7 +126,7 @@ Add pve-autoinstall as an input, call `lib.mkPve` with your config module (path 
 }
 ```
 
-Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For a single-file config, pass the attrset inline as `config` (see `config/example.nix` for the full shape, including pinning and hashed passwords). To use the CLI against your pinned input, re-export its app (`apps.x86_64-linux.pve-autoinstall = pve-autoinstall.apps.x86_64-linux.default;`) and run `nix run .#pve-autoinstall -- ./hosts.nix`.
+Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For a single-file config, pass the attrset inline as `config` (see [config/example.nix](config/example.nix) for the full shape, including pinning and hashed passwords). To use the CLI against your pinned input, re-export its app (`apps.x86_64-linux.pve-autoinstall = pve-autoinstall.apps.x86_64-linux.default;`) and run `nix run .#pve-autoinstall -- ./hosts.nix`.
 
 ## Flake outputs
 
@@ -123,13 +142,22 @@ Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For
 
 `apps.<system>.default`: the `pve-autoinstall` CLI.
 
-`checks.x86_64-linux`: per host, `pve-answer-validates-<host>` (runs `validate-answer`) and `pve-iso-is-autoinstall-<host>` (runs `inspect-iso`); `pve-render-golden` (an exact full-file diff of each golden fixture's rendered TOML against its expected output, not a substring match); one `pve-rejects-<case>` per invalid fixture (each must be rejected at type level or by its specific assertion message); and `pve-host-key-pattern-consistent` (this README documents the host-key pattern exactly as enforced). See `config/fixtures.nix`.
+`checks.x86_64-linux`: per host, `pve-answer-validates-<host>` (runs `validate-answer`) and `pve-iso-is-autoinstall-<host>` (runs `inspect-iso`); `pve-render-golden` (an exact full-file diff of each golden fixture's rendered TOML against its expected output, not a substring match); one `pve-rejects-<case>` per invalid fixture (each must be rejected at type level or by its specific assertion message); `pve-host-key-pattern-consistent` (this README documents the host-key pattern exactly as enforced); and `pve-readme-sample-consistent` (the Quickstart sample is exactly [config/minimal.nix](config/minimal.nix), and that config passes the schema). See [config/fixtures.nix](config/fixtures.nix).
 
 `formatter.<system>`: `nixfmt-tree`, so `nix fmt` matches the devenv formatting.
 
 `packages` and `checks` are x86_64-linux only: the PVE ISOs and `proxmox-auto-install-assistant` are x86_64. `apps` and `formatter` are exposed for both x86_64-linux and aarch64-linux, so `nix run` and `nix fmt` work on either.
 
 ## Development
+
+In this flake's own checkout, the committed example config (`config/example.nix`) is what the packages build:
+
+```sh
+nix build .#pve-answers      # answers/<host>.toml
+nix build .#pve-isos         # isos/<host>.iso
+nix build .#pve-autoinstall  # the CLI
+nix flake check .            # validate-answer + inspect-iso per host, plus the render, reject and docs consistency checks
+```
 
 `Taskfile.yml` wraps the common workflows:
 
@@ -143,7 +171,7 @@ Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For
 | `task clean` | Remove the build out-links (`result`, `result-answers`, `result-isos`) and `pve-result`. |
 | `task ci` | Fast pre-commit gate (also the git hook): `gitleaks`, `treefmt`, `deadnix`, `statix`, `flake-checker`. No ISO builds. |
 | `task verify` | `ci` plus the heavy `nix flake check`. |
-| `task test` | Golden/reject checks, the docs pattern check and the CLI bats tests against the built CLI; no ISO builds. |
+| `task test` | Every check except the per-host `validate-answer`/`inspect-iso` ones, plus the CLI bats tests against the built CLI; no ISO builds. |
 | `task update-inputs` | Update flake inputs, or one input with `task update-inputs -- <name>`. |
 | `task update-iso` | Fetch a new PVE ISO and print the SRI hash for `flake.nix`. |
 

@@ -5,6 +5,8 @@
 #     specific assertion message.
 #   - pve-host-key-pattern-consistent: the host-key pattern quoted in README.md
 #     must be the exact literal lib/validators.nix enforces.
+#   - pve-readme-sample-consistent: config/minimal.nix must pass the schema and
+#     appear byte-exact in README.md's Quickstart.
 #
 # Wired in flake.nix as
 #   import ./packages/tests.nix { inherit pkgs lib; factory = default; }
@@ -118,11 +120,33 @@ let
         fi
         touch $out
       '';
+
+  # Docs consistency on the Quickstart sample: config/minimal.nix must pass the
+  # schema (forcing the evaluated config turns a failure into an eval error)
+  # and appear in README.md byte-exact, so the documented sample cannot drift.
+  sampleConfig = builtins.deepSeq (factory.validate (import ../config/minimal.nix)).config "valid";
+  readmeSampleConsistent =
+    pkgs.runCommand "pve-readme-sample-consistent"
+      {
+        readme = ../README.md;
+        sample = ../config/minimal.nix;
+        inherit sampleConfig;
+      }
+      ''
+        awk '/^```nix config\/minimal\.nix$/ {f=1; next} f && /^```$/ {exit} f' "$readme" > extracted
+        if ! diff -u "$sample" extracted >&2; then
+          echo "pve-readme-sample-consistent: the README Quickstart sample differs from config/minimal.nix" >&2
+          exit 1
+        fi
+        echo "pve-readme-sample-consistent: sample config is $sampleConfig and matches the README"
+        touch $out
+      '';
 in
 {
   checks = {
     pve-render-golden = golden;
     pve-host-key-pattern-consistent = hostKeyPatternConsistent;
+    pve-readme-sample-consistent = readmeSampleConsistent;
   }
   // (lib.listToAttrs (
     map (c: lib.nameValuePair "pve-rejects-${c.name}" (rejectCheck c)) fixtures.reject

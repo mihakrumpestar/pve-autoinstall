@@ -62,17 +62,15 @@ tasks:
 
   test:
     desc: |
-      Render/reject checks, the docs pattern check and CLI argument-parsing
-      tests. Does not build ISOs; `check` is the ISO-level validation.
+      Every check except the per-host validate-answer/inspect-iso ones, plus
+      CLI argument-parsing tests. No ISO builds; `check` is the ISO-level
+      validation.
     cmds:
-      - nix build --no-link .#checks.x86_64-linux.pve-render-golden
-      - nix build --no-link .#checks.x86_64-linux.pve-host-key-pattern-consistent
-      # Reject-check names come from config/fixtures.nix; derive them so this
-      # never drifts from the fixtures.
       - |
-        rejects=$(nix eval --raw .#checks.x86_64-linux \
-          --apply 'c: builtins.concatStringsSep " " (map (n: ".#checks.x86_64-linux." + n) (builtins.filter (n: builtins.match "pve-rejects-.*" n != null) (builtins.attrNames c)))')
-        if [ -n "$rejects" ]; then nix build --no-link $rejects; fi
+        # Derived so new offline checks are picked up automatically.
+        offline=$(nix eval --raw .#checks.x86_64-linux \
+          --apply 'c: builtins.concatStringsSep " " (map (n: ".#checks.x86_64-linux." + n) (builtins.filter (n: builtins.match "pve-(answer-validates|iso-is-autoinstall)-.*" n == null) (builtins.attrNames c)))')
+        nix build --no-link $offline
       - PVE_CLI="$(nix build --no-link --print-out-paths .#pve-autoinstall)/bin/pve-autoinstall" bats tests/cli.bats
 
   update-inputs:
