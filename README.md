@@ -149,7 +149,7 @@ Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For
 
 `nix flake check` runs the full check set listed under Flake outputs. The CLI's argument parsing is covered by bats tests in `tests/cli.bats`; `task test` builds `.#pve-autoinstall` and runs them (they skip without `PVE_CLI`).
 
-CI (`.github/workflows/ci.yml`) runs two jobs on every push, pull request and manual dispatch, both driven by devenv (`devenv --profile ci shell`) so CI uses the same toolchain as local: `Lint & Test` (`task ci` and `task test`) and `Nix Check` (`task check`, the full `nix flake check`). The lint job fails if `task ci` left the working tree dirty, so run `task ci` locally and commit the result.
+CI (`.github/workflows/ci.yml`) runs a single lint job on every push, pull request and manual dispatch: `task ci` under `devenv --profile ci shell`, so CI uses the same toolchain as local. Tests and ISO validation stay local (`task test`, `task check`, `task verify`) to keep CI fast. The job fails if `task ci` left the working tree dirty, so run `task ci` locally and commit the result.
 
 `devenv.nix` keeps the toolchain in one place: a ci tool group (`gitleaks`, `nixfmt-tree`, `deadnix`, `statix`, `flake-checker`, `go-task`, `bats`) and a pve tool group (`proxmox-auto-install-assistant`, `xorriso`) for manual answer/ISO work. A plain `devenv shell` includes both; the `ci` profile drops the pve group via a profile override, so CI realises a small, cacheable toolchain. On shell entry devenv installs a git pre-commit hook that runs `task ci` (made a no-op under the `ci` profile).
 
