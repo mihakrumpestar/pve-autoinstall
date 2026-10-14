@@ -211,6 +211,10 @@ let
         exit 0
       fi
 
+      # Wipe the output directory so a re-run never leaves stale artifacts
+      # behind (renamed/removed hosts, or a switch such as --answers-only).
+      rm -rf "$out"
+
       # Create the output dirs only now that a build is actually going to run.
       if [ "$build_answers" -eq 1 ]; then mkdir -p "$out/answers"; fi
       if [ "$build_isos" -eq 1 ]; then mkdir -p "$out/isos"; fi

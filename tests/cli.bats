@@ -99,3 +99,15 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = $'pve01\npve02\npve03' ]
 }
+
+@test "re-running wipes the output directory (no stale artifacts)" {
+  out="$BATS_TEST_TMPDIR/out"
+  mkdir -p "$out/answers" "$out/isos"
+  : > "$out/answers/ghost.toml"
+  : > "$out/isos/ghost.iso"
+  run "$CLI" --answers-only --no-check -H pve01 -o "$out" "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -f "$out/answers/pve01.toml" ]
+  [ ! -e "$out/answers/ghost.toml" ]
+  [ ! -e "$out/isos/ghost.iso" ]
+}

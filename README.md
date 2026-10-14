@@ -36,7 +36,7 @@ One entry per host; the key names the output files and must be `fqdn`'s first la
 
 For a complete three-host config (zfs raid1, ext4, btrfs, interface pinning) see [config/example.nix](config/example.nix). Every option is listed in the Configuration reference below.
 
-That renders the TOML answer files, builds the prepared ISOs with the answer embedded, and symlinks both into `./pve-result` (override with `-o`): `answers/<host>.toml` and `isos/<host>.iso`. Boot each ISO on its host.
+That renders the TOML answer files, builds the prepared ISOs with the answer embedded, and symlinks both into `./pve-result` (override with `-o`): `answers/<host>.toml` and `isos/<host>.iso`. Boot each ISO on its host. The output directory is wiped and recreated on every run, so a re-run never leaves stale artifacts behind.
 
 Validation runs by default (`validate-answer` on the answers, `inspect-iso` on the ISOs), the same per-host checks as `nix flake check`. The results are `nix build` out-links into the Nix store, so they survive garbage collection until you delete them.
 
