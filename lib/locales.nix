@@ -1,7 +1,7 @@
 # Locale value sets (keyboard/country/timezone) accepted by the PVE answer
 # file, derived from the same sources PVE itself uses, so
 # ../modules/schema.nix can reject bad values at evaluation instead of only at
-# the PVE validate-answer/inspect-iso check. Built by ../packages/default.nix
+# the PVE validate-answer/inspect-iso check. Built in ../lib/eval-config.nix
 # from pkgs.tzdata and pkgs.isocodes, so consumers stay free of nixpkgs
 # coupling.
 #

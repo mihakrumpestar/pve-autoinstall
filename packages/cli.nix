@@ -3,28 +3,31 @@
 # same prelude (resolving flake + config via the environment) so the factory and
 # renderer are never imported directly from the script.
 #
-# Host names are never interpolated into shell or nix source: selections travel
-# through the environment and are read back with builtins.getEnv /
-# builtins.fromJSON. The output directory is created only once a build will run.
+# Host names are never interpolated into shell or nix source: selections
+# travel through the environment (space-joined; the schema's host-key
+# pattern forbids spaces) and are read back with builtins.getEnv /
+# builtins.split. The output directory is created only once a build will run.
 {
   pkgs,
-  lib,
   flakeSrc,
-  pveIso,
+  pveIsoVersion,
+  # The one nixpkgs lib helper the script text needs (shell-quoting the
+  # baked-in values); everything else comes in as plain data.
+  escapeShellArg,
 }:
 let
   script = pkgs.writeShellApplication {
     name = "pve-autoinstall";
-    # readlink/dirname must resolve hermetically, so coreutils is pinned too.
+    # nix is pinned first in runtimeInputs so the script's `nix` calls resolve
+    # hermetically; readlink/dirname must too, so coreutils is pinned as well.
     runtimeInputs = [
       pkgs.nix
       pkgs.coreutils
     ];
     meta.description = "Build Proxmox VE autoinstall answer files and prepared ISOs from a Nix config module";
     text = ''
-      export PVE_AUTOINSTALL_FLAKE=${lib.escapeShellArg (toString flakeSrc)}
-      PVE_VERSION=${lib.escapeShellArg pveIso.version}
-      NIX_CMD=${lib.escapeShellArg (lib.getExe pkgs.nix)}
+      export PVE_AUTOINSTALL_FLAKE=${escapeShellArg (toString flakeSrc)}
+      PVE_VERSION=${escapeShellArg pveIsoVersion}
       PROG=pve-autoinstall
 
       # Answers can embed secrets (the hashed root password); keep the output
@@ -61,21 +64,14 @@ let
       nix_run() {
         sub="$1"
         shift
-        "$NIX_CMD" "$sub" --extra-experimental-features "nix-command flakes" --impure --no-write-lock-file "$@"
-      }
-
-      # JSON-quote one host name. Names are already charset-validated by the
-      # schema (^[A-Za-z0-9][A-Za-z0-9_+-]*$); the escaping is defensive only.
-      json_string() {
-        local value="$1"
-        value="''${value//\\/\\\\}"
-        value="''${value//\"/\\\"}"
-        printf '"%s"' "$value"
+        nix "$sub" --extra-experimental-features "nix-command flakes" --impure --no-write-lock-file "$@"
       }
 
       # Every nix expression goes through this one prelude: resolve the flake
       # and the config from the environment, then build the factory result.
-      PRELUDE='let flake = builtins.getFlake (builtins.getEnv "PVE_AUTOINSTALL_FLAKE"); config = /. + builtins.getEnv "PVE_AUTOINSTALL_CONFIG"; p = flake.lib.mkPve { inherit config; }; in '
+      # system = builtins.currentSystem (available because nix_run is impure)
+      # makes the factory use the build host's pkgs on any arch.
+      PRELUDE='let flake = builtins.getFlake (builtins.getEnv "PVE_AUTOINSTALL_FLAKE"); config = /. + builtins.getEnv "PVE_AUTOINSTALL_CONFIG"; p = flake.lib.mkPve { inherit config; system = builtins.currentSystem; }; in '
       HOSTNAMES_EXPR="$PRELUDE"'builtins.concatStringsSep " " (builtins.attrNames p.answers)'
       ANSWERS_EXPR="$PRELUDE"'builtins.getAttr (builtins.getEnv "PVE_AUTOINSTALL_HOST") p.answers'
       ISOS_EXPR="$PRELUDE"'builtins.getAttr (builtins.getEnv "PVE_AUTOINSTALL_HOST") p.isos'
@@ -164,7 +160,7 @@ let
 
       # Derive the whole build state from the two mode flags in one place:
       # what to build and which checks to run. check_mode picks the matching
-      # subset of the factory's per-host checks, so --answers-only /
+      # subset of the per-host checks (checksFor), so --answers-only /
       # --isos-only never force the other artifact to be built.
       build_answers=1
       build_isos=1
@@ -230,18 +226,13 @@ let
       done
 
       if [ "$no_check" -eq 0 ]; then
-        # Hosts travel as a JSON array via the environment; nix reads it back
-        # with builtins.fromJSON, so no host name is ever spliced into source.
-        hosts_json="["
-        sep=
-        for host in "''${selected_hosts[@]}"; do
-          hosts_json+="$sep$(json_string "$host")"
-          sep=,
-        done
-        hosts_json+="]"
-        export PVE_AUTOINSTALL_HOSTS="$hosts_json"
-
-        CHECKS_EXPR="$PRELUDE"'p.selectChecks { hosts = builtins.fromJSON (builtins.getEnv "PVE_AUTOINSTALL_HOSTS"); mode = "'"$check_mode"'"; }'
+        # Hosts travel space-joined through the environment and nix splits
+        # them back (builtins.split, filtered to strings), so no host name is
+        # ever spliced into source. Names cannot contain spaces per the
+        # schema's host-key regex (pinned by the bad-host-key/dotted-host-key
+        # fixtures).
+        export PVE_AUTOINSTALL_HOSTS="''${selected_hosts[*]}"
+        CHECKS_EXPR="$PRELUDE"'p.checksFor { hostList = builtins.filter builtins.isString (builtins.split " " (builtins.getEnv "PVE_AUTOINSTALL_HOSTS")); mode = "'"$check_mode"'"; }'
         nix_run build --no-link --expr "$CHECKS_EXPR" || exit 1
       fi
 

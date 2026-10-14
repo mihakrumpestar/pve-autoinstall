@@ -23,58 +23,35 @@
           config.allowUnfreePredicate = allowUnfreePredicate;
         };
 
-      # Host tooling (`nix run`, `nix fmt`) works on any of these systems.
+      # Every output is exported for each build-host system in this list: the
+      # CLI and the ISO tooling build natively on each. Each host's
+      # install-target arch is chosen in its config (modules/schema.nix),
+      # independent of the build host.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       forAllSystems = lib.genAttrs systems;
 
-      # ISO tooling (`lib.mkPve`, `packages`, `checks`) is x86_64-linux by
-      # design: PVE ISOs and proxmox-auto-install-assistant are x86_64 only.
-      # `nix run`/`nix fmt` still work on every system in `systems`.
-      system = "x86_64-linux";
-      pkgs = pkgsFor system;
-
-      # Pinned PVE 9.x ISO. Bump by editing version + hash together: get the
-      # new release from https://www.proxmox.com/en/downloads, then
-      #   nix store prefetch-file --json --hash-type sha256 <URL>
-      # and paste the printed hash (SRI form) below; the URL is derived from
-      # the version. Note: download.proxmox.com currently serves a mismatching
-      # TLS cert, so the pin uses enterprise.proxmox.com (serves the same ISO,
-      # HTTP 200).
-      pveIso =
-        let
-          version = "9.2-1";
-        in
-        {
-          inherit version;
-          url = "https://enterprise.proxmox.com/iso/proxmox-ve_${version}.iso";
-          hash = "sha256-Toj+QW35tSdiShdfJMmqB8cU0zMq+x7j2/OHlXPvLGw=";
-        };
-
-      srcIso = pkgs.fetchurl {
-        inherit (pveIso) url hash;
-      };
+      # Pinned PVE ISOs per install-target arch. Single source of truth in
+      # lib/iso-pins.nix (bump instructions live there).
+      pveIso = import ./lib/iso-pins.nix;
 
       # Canonical factory: renders a typed config module into per-host answers,
-      # prepared ISOs, bundle dirs and PVE-tool checks. `pkgs`/`pveIso`/`srcIso`
-      # are provided by the flake, not the consumer: they are applied last, so a
-      # caller-supplied pkgs/pveIso is deliberately ignored (the pinned ISO must
-      # not be silently overridable).
+      # prepared ISOs, bundle dirs and PVE-tool checks. Pin authority: a
+      # caller passing `pkgs` or `pveIso` gets a loud "unexpected argument"
+      # error, so the pinned ISOs cannot be silently overridden. `system`
+      # selects the build host's pkgs (the per-host install-target arch comes
+      # from the config).
       mkPve =
-        args:
-        import ./packages (
-          args
-          // {
-            inherit
-              pkgs
-              lib
-              pveIso
-              srcIso
-              ;
-          }
-        );
+        {
+          config,
+          system ? "x86_64-linux",
+        }:
+        import ./packages {
+          inherit config lib pveIso;
+          pkgs = pkgsFor system;
+        };
 
       # The flake's `packages` and `checks` always use the committed example
       # config: config/default.nix is gitignored, so it is never part of the
@@ -83,7 +60,12 @@
       # their real config was used). Supply a real config via the CLI
       # (`nix run . -- <config.nix>`) or by calling
       # `lib.mkPve { config = ...; }`.
-      default = mkPve { config = ./config/example.nix; };
+      defaultFor =
+        system:
+        mkPve {
+          config = ./config/example.nix;
+          inherit system;
+        };
     in
     {
       # Canonical consumer entrypoint; also what the CLI resolves via the flake.
@@ -93,20 +75,21 @@
         inherit pveIso mkPve;
       };
 
-      # ISO-bearing outputs are x86_64-linux only (see the `system` comment).
-      # The CLI is not x86_64-bound (it only shells out to nix), so its
-      # package is built for every system in `systems` (each with that
-      # system's pkgs).
+      # All outputs are exported for every system in `systems`; the ISO-bearing
+      # ones use that system's pkgs (the native assistant prepares any target
+      # ISO, see packages/default.nix).
       packages = forAllSystems (
         s:
+        let
+          default = defaultFor s;
+        in
         {
           pve-autoinstall = import ./packages/cli.nix {
             pkgs = pkgsFor s;
-            inherit lib pveIso;
+            inherit (lib) escapeShellArg;
+            pveIsoVersion = pveIso.version;
             flakeSrc = self.outPath;
           };
-        }
-        // lib.optionalAttrs (s == system) {
           pve-answers = default.answersDir;
           pve-isos = default.isosDir;
           default = default.isosDir;
@@ -114,14 +97,18 @@
       );
 
       # Per-host PVE-tool checks plus the render/reject checks from
-      # packages/tests.nix (golden render, non-vacuous rejection cases and the
-      # host-key docs pattern check).
-      checks.${system} =
+      # packages/tests.nix.
+      checks = forAllSystems (
+        s:
+        let
+          default = defaultFor s;
+        in
         default.checks
         // (import ./packages/tests.nix {
-          inherit pkgs lib;
-          factory = default;
-        }).checks;
+          pkgs = pkgsFor s;
+          inherit lib;
+        }).checks
+      );
 
       # `nix run` executes the CLI package exported under `packages`.
       apps = forAllSystems (s: {

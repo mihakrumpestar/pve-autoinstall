@@ -11,6 +11,10 @@ let
   validators = import ../lib/validators.nix { inherit lib; };
   inherit (validators) patterns;
 
+  # Pinned installer ISOs; the arch enum comes from its arch set so the
+  # supported values live in exactly one place.
+  isoPins = import ../lib/iso-pins.nix;
+
   # Full-range IPv4 / CIDR option types (PVE parses these as Rust IpAddr/Cidr,
   # which reject leading-zero octets, octets > 255 and prefixes > 32).
   ipv4Type = lib.types.addCheck lib.types.str validators.isIpv4 // {
@@ -136,6 +140,14 @@ in
       type = lib.types.attrsOf (
         lib.types.submodule {
           options = {
+            # Install target; selects the ISO only, never rendered into the
+            # answer TOML.
+            arch = lib.mkOption {
+              type = lib.types.enum (lib.attrNames isoPins.arches);
+              default = "x86_64";
+              description = "Install-target architecture of this host: selects the pinned PVE installer ISO (see lib/iso-pins.nix). The answer file itself is architecture independent and is never rendered with this value.";
+            };
+
             # [global] section, in render order.
             keyboard = lib.mkOption {
               type = lib.types.nullOr (lib.types.enum locales.keyboardLayouts);

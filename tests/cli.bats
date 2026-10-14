@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # CLI argument-parsing tests. These need only the built CLI, not the ISO
-# build, so they run fast; the -H rejection test additionally runs one nix
-# eval of the example config (no builds).
+# build, so they run fast; most run no nix at all, the rest evaluate the
+# example config and build only pure answer derivations (no ISO, no
+# assistant, no network).
 #
 # Point PVE_CLI at the built executable (a store bin path, or the store output
 # directory containing bin/pve-autoinstall). `task test` builds it and exports
@@ -83,4 +84,18 @@ setup() {
   run "$CLI" -- "$CONFIG" extra.nix
   [ "$status" -eq 2 ]
   [[ "$output" == *"unexpected argument: extra.nix"* ]]
+}
+
+@test "--answers-only --no-check builds the selected host's answer file" {
+  # Answers are pure writeText derivations: no ISO, no assistant, no network.
+  out="$BATS_TEST_TMPDIR/out"
+  run "$CLI" --answers-only --no-check -H pve01 -o "$out" "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -f "$out/answers/pve01.toml" ]
+}
+
+@test "--list prints exactly the config's host names" {
+  run "$CLI" --list "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'pve01\npve02\npve03' ]
 }

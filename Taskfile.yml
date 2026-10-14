@@ -68,8 +68,9 @@ tasks:
     cmds:
       - |
         # Derived so new offline checks are picked up automatically.
-        offline=$(nix eval --raw .#checks.x86_64-linux \
-          --apply 'c: builtins.concatStringsSep " " (map (n: ".#checks.x86_64-linux." + n) (builtins.filter (n: builtins.match "pve-(answer-validates|iso-is-autoinstall)-.*" n == null) (builtins.attrNames c)))')
+        system=$(nix config show system)
+        offline=$(nix eval --raw ".#checks.$system" \
+          --apply "c: builtins.concatStringsSep \" \" (map (n: \".#checks.$system.\" + n) (builtins.filter (n: builtins.match \"pve-(answer-validates|iso-is-autoinstall)-.*\" n == null) (builtins.attrNames c)))")
         nix build --no-link $offline
       - PVE_CLI="$(nix build --no-link --print-out-paths .#pve-autoinstall)/bin/pve-autoinstall" bats tests/cli.bats
 
@@ -82,18 +83,15 @@ tasks:
 
   update-iso:
     desc: |
-      Repin the PVE ISO after a new release. Pass the new ISO URL to print the
-      SRI hash for the `pveIso` pin in flake.nix (bump `version` alongside the
-      hash; the URL is derived from `version`), or run with no URL for the
-      manual steps:
-        task update-iso -- https://enterprise.proxmox.com/iso/proxmox-ve_X.Y-Z.iso
+      Repin both PVE ISOs after a new release: set `version` in
+      lib/iso-pins.nix (one bump covers both arches), then run this task. It
+      derives both per-arch ISO URLs from the pin module, prefetches them and
+      prints the two sha256 SRI hashes for the `sha256` fields.
     cmds:
       - |
-        url={{.CLI_ARGS}}
-        if [ -z "$url" ]; then
-          echo "usage: task update-iso -- <ISO URL>"
-          echo "manual: nix store prefetch-file --json --hash-type sha256 <URL>"
-          echo "then edit flake.nix pveIso: set version and hash (url is derived)"
-          exit 2
-        fi
-        nix store prefetch-file --json --hash-type sha256 "$url"
+        # The trailing "\n" matters: `read` drops a last line without one.
+        nix eval --raw .#lib.pveIso --apply 'p: builtins.concatStringsSep "\n" (map (a: a + " " + p.urlFor a) (builtins.attrNames p.arches)) + "\n"' |
+        while read -r arch url; do
+          echo "# $arch $url"
+          nix store prefetch-file --json --hash-type sha256 "$url"
+        done

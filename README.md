@@ -4,7 +4,7 @@ A CLI and Nix flake that turns a typed Nix configuration into Proxmox VE autoins
 
 ## Quickstart
 
-Requirements: Nix with flakes enabled. Building ISOs needs network access to fetch the pinned PVE ISO and an `x86_64-linux` builder (see Flake outputs).
+Requirements: Nix with flakes enabled. Building ISOs needs network access to fetch the pinned PVE ISO and a Linux builder (`x86_64-linux` or `aarch64-linux`, see Flake outputs). Each host's install-target arch is set by its `arch` option, independent of the build host.
 
 **Write `hosts.nix`, then run it:**
 
@@ -32,7 +32,7 @@ Requirements: Nix with flakes enabled. Building ISOs needs network access to fet
 nix run github:mihakrumpestar/pve-autoinstall -- ./hosts.nix
 ```
 
-One entry per host; the key names the output files and must be `fqdn`'s first label (PVE takes the hostname from it). Everything not shown defaults: `filesystem = "zfs"`, `zfsRaid = "raid0"`, NIC names auto-pinned `nic0/nic1/...`.
+One entry per host; the key names the output files and must be `fqdn`'s first label (PVE takes the hostname from it). Everything not shown defaults: `arch = "x86_64"`, `filesystem = "zfs"`, `zfsRaid = "raid0"`, NIC names auto-pinned `nic0/nic1/...`.
 
 For a complete three-host config (zfs raid1, ext4, btrfs, interface pinning) see [config/example.nix](config/example.nix). Every option is listed in the Configuration reference below.
 
@@ -45,6 +45,14 @@ Only need the answers? `--answers-only` skips the ISO builds and the download; s
 ## Configuration reference
 
 One config module with `hosts = { <name> = { ... }; }`, one entry per host. The key names the output files. Options are grouped by the TOML section they render into, in the same order as `modules/schema.nix`. The answer-file reference is the official Proxmox wiki: [Automated Installation](https://pve.proxmox.com/wiki/Automated_Installation). The host key is the identity and is not rendered into the TOML; the system hostname comes from `fqdn`. It must match `^[A-Za-z0-9][A-Za-z0-9_+-]*$` (no dots: the first label of `fqdn` must equal the key and can never contain one).
+
+### Install target
+
+Not rendered into the answer TOML (the answer format has no architecture field):
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `arch` | `x86_64`/`aarch64` | `"x86_64"` | install-target architecture of the host; selects the pinned PVE installer ISO (see ISO pin); the answer file itself is architecture independent |
 
 ### `[global]`
 
@@ -117,24 +125,36 @@ Add pve-autoinstall as an input, call `lib.mkPve` with your config module (path 
 ```nix
 {
   inputs.pve-autoinstall.url = "github:mihakrumpestar/pve-autoinstall";
-  outputs = { pve-autoinstall, ... }: {
-    packages.x86_64-linux = {
-      pve-answers = (pve-autoinstall.lib.mkPve { config = ./hosts.nix; }).answersDir;
-      pve-isos = (pve-autoinstall.lib.mkPve { config = ./hosts.nix; }).isosDir;
+  outputs = { pve-autoinstall, ... }:
+    let
+      # Your build host: x86_64-linux or aarch64-linux. Keep it in sync with
+      # the `system` passed to mkPve (it selects the build host's pkgs).
+      system = "x86_64-linux";
+    in
+    {
+      packages.${system} = {
+        pve-answers = (pve-autoinstall.lib.mkPve {
+          config = ./hosts.nix;
+          inherit system;
+        }).answersDir;
+        pve-isos = (pve-autoinstall.lib.mkPve {
+          config = ./hosts.nix;
+          inherit system;
+        }).isosDir;
+      };
     };
-  };
 }
 ```
 
-Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For a single-file config, pass the attrset inline as `config` (see [config/example.nix](config/example.nix) for the full shape, including pinning and hashed passwords). To use the CLI against your pinned input, re-export its app (`apps.x86_64-linux.pve-autoinstall = pve-autoinstall.apps.x86_64-linux.default;`) and run `nix run .#pve-autoinstall -- ./hosts.nix`.
+Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For a single-file config, pass the attrset inline as `config` (see [config/example.nix](config/example.nix) for the full shape, including pinning and hashed passwords). To use the CLI against your pinned input, re-export its app (`apps.${system}.pve-autoinstall = pve-autoinstall.apps.${system}.default;`) and run `nix run .#pve-autoinstall -- ./hosts.nix`.
 
 ## Flake outputs
 
 `lib`:
-- `lib.mkPve { config = ...; }` renders a config module (path or attrset) into per-host answers, prepared ISOs, bundle dirs, and PVE-tool checks. It returns `answers`, `isos`, `answersDir`, `isosDir`, `checks`, `checksForHosts`, `selectChecks` (pick per-host checks by host and mode: `answers`, `isos`, `all`; used by the CLI), and the evaluated `config`, plus `evalConfig` (evaluate a config against the schema), `validate` (evaluate and throw the aggregated assertion messages), and `renderAnswer` (render one host's TOML). The tests use `evalConfig`, `validate` and `renderAnswer`.
-- `lib.pveIso` is the pinned PVE ISO: `version` and `hash` live in `flake.nix`, with the URL derived from `version` (`proxmox-ve_<version>.iso`). See ISO pin.
+- `lib.mkPve { config = ...; system ? "x86_64-linux"; }` renders a config module (path or attrset) into per-host answers, prepared ISOs, bundle dirs, and PVE-tool checks (`system` selects the build host's pkgs; the per-host install-target arch comes from the config's `arch`). It returns `answers`, `isos`, `answersDir`, `isosDir`, `checks`, and `checksFor { hostList ? all hosts, mode ? "all" }` (pick per-host checks by host and mode: `answers`, `isos`, `all`; used by the CLI). Schema evaluation (`evalConfig`, `validate`) and TOML rendering (`renderAnswer`) live in [lib/eval-config.nix](lib/eval-config.nix) and [lib/render-answer.nix](lib/render-answer.nix).
+- `lib.pveIso` is the pinned PVE ISOs, defined in [lib/iso-pins.nix](lib/iso-pins.nix): `version`, `arches` (per arch: ISO name `suffix` and `sha256`) and the pure helpers `urlFor`, `hashFor`; names and URLs are derived from `version` (`proxmox-ve_<version>.iso`, `proxmox-ve_<version>-arm64.iso`). See ISO pin.
 
-`packages.x86_64-linux` (the bundles build the committed `config/example.nix`):
+`packages.<system>` (the bundles build the committed `config/example.nix`):
 - `pve-answers`: bundle dir with `answers/<host>.toml`.
 - `pve-isos`: bundle dir with `isos/<host>.iso`.
 - `pve-autoinstall`: the CLI (takes any config at runtime).
@@ -142,11 +162,11 @@ Then build as usual with `nix build .#pve-answers` / `nix build .#pve-isos`. For
 
 `apps.<system>.default`: the `pve-autoinstall` CLI.
 
-`checks.x86_64-linux`: per host, `pve-answer-validates-<host>` (runs `validate-answer`) and `pve-iso-is-autoinstall-<host>` (runs `inspect-iso`); `pve-render-golden` (an exact full-file diff of each golden fixture's rendered TOML against its expected output, not a substring match); one `pve-rejects-<case>` per invalid fixture (each must be rejected at type level or by its specific assertion message); `pve-host-key-pattern-consistent` (this README documents the host-key pattern exactly as enforced); and `pve-readme-sample-consistent` (the Quickstart sample is exactly [config/minimal.nix](config/minimal.nix), and that config passes the schema). See [config/fixtures.nix](config/fixtures.nix).
+`checks.<system>`: per host, `pve-answer-validates-<host>` (runs `validate-answer`) and `pve-iso-is-autoinstall-<host>` (runs `inspect-iso`); `pve-render-golden` (an exact full-file diff of each golden fixture's rendered TOML against its expected output, not a substring match); one `pve-rejects-<case>` per invalid fixture (each must be rejected at type level or by its specific assertion message); `pve-host-key-pattern-consistent` (this README documents the host-key pattern exactly as enforced); and `pve-readme-sample-consistent` (the Quickstart sample is exactly [config/minimal.nix](config/minimal.nix), and that config passes the schema). See [config/fixtures.nix](config/fixtures.nix).
 
 `formatter.<system>`: `nixfmt-tree`, so `nix fmt` matches the devenv formatting.
 
-`packages` and `checks` are x86_64-linux only: the PVE ISOs and `proxmox-auto-install-assistant` are x86_64. `apps` and `formatter` are exposed for both x86_64-linux and aarch64-linux, so `nix run` and `nix fmt` work on either.
+`packages` and `checks` are exposed for both `x86_64-linux` and `aarch64-linux`: the native `proxmox-auto-install-assistant` prepares any target ISO (`prepare-iso` is arch-agnostic toward its input), and each host's `arch` selects its pinned ISO. `apps` and `formatter` are exposed for both systems too, so `nix run` and `nix fmt` work on either.
 
 ## Development
 
@@ -173,7 +193,7 @@ nix flake check .            # validate-answer + inspect-iso per host, plus the 
 | `task verify` | `ci` plus the heavy `nix flake check`. |
 | `task test` | Every check except the per-host `validate-answer`/`inspect-iso` ones, plus the CLI bats tests against the built CLI; no ISO builds. |
 | `task update-inputs` | Update flake inputs, or one input with `task update-inputs -- <name>`. |
-| `task update-iso` | Fetch a new PVE ISO and print the SRI hash for `flake.nix`. |
+| `task update-iso` | Prefetch both pinned PVE ISOs and print their SRI hashes for `lib/iso-pins.nix`. |
 
 `nix flake check` runs the full check set listed under Flake outputs. The CLI's argument parsing is covered by bats tests in `tests/cli.bats`; `task test` builds `.#pve-autoinstall` and runs them (they skip without `PVE_CLI`).
 
@@ -183,10 +203,10 @@ CI (`.github/workflows/ci.yml`) runs a single lint job on every push, pull reque
 
 ## ISO pin
 
-The pinned ISO lives in `flake.nix` (`pveIso`): `version` and `hash`, with the URL derived from `version` (`proxmox-ve_<version>.iso`). To bump:
+The pinned ISOs live in [lib/iso-pins.nix](lib/iso-pins.nix) (exported as `lib.pveIso`): `version` plus one `sha256` per install-target arch (`arches`), with the ISO names and URLs derived from `version` (`proxmox-ve_<version>.iso`, `proxmox-ve_<version>-arm64.iso`). To bump:
 
-1. Note the new release name from https://www.proxmox.com/en/downloads and set `version`.
-2. Fetch and hash the new ISO without trusting it: `nix store prefetch-file --json --hash-type sha256 <URL>`, and copy the printed `hash` (SRI form) into `pveIso`. `task update-iso` does the same fetch and prints the hash.
-3. Re-run `nix flake check`: the `validate-answer` and `inspect-iso` checks confirm the updated ISO still embeds the per-host answers.
+1. Note the new release name from https://www.proxmox.com/en/downloads and set `version` (one bump covers both arches).
+2. Fetch and hash the new ISOs without trusting them: `task update-iso` prefetches both derived URLs and prints the `sha256` values (SRI form) to copy into `lib/iso-pins.nix` (manual: `nix store prefetch-file --json --hash-type sha256 <URL>`).
+3. Re-run `nix flake check`: the `validate-answer` and `inspect-iso` checks confirm the updated ISOs still embed the per-host answers.
 
-The pin uses `enterprise.proxmox.com` because `download.proxmox.com` currently serves a mismatching TLS cert (same ISO, HTTP 200).
+The pin uses `enterprise.proxmox.com` because `download.proxmox.com` currently serves a mismatching TLS cert (same ISOs, HTTP 200).

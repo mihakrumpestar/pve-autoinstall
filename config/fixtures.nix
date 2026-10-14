@@ -374,6 +374,12 @@ in
       cfg = withHost { keyboard = "xx-yy"; };
       expect = null;
     }
+    {
+      name = "bad-arch-enum";
+      # Not in the supported install-target arch set (lib/iso-pins.nix).
+      cfg = withHost { arch = "riscv64"; };
+      expect = null;
+    }
 
     # Assertion-level rejections; expect is a substring of the message.
     {
@@ -654,6 +660,19 @@ in
       # Shape-valid lowercase alpha-2, but not a real ISO 3166-1 code.
       cfg = withHost { country = "zz"; };
       expect = "is not a valid ISO 3166-1 alpha-2 code";
+    }
+    {
+      name = "timezone-not-in-tzdata";
+      # Shape-valid string, but not a tzdata zone (the option type is a plain
+      # string; membership is enforced by the assertion).
+      cfg = withHost { timezone = "Not/AZone"; };
+      expect = "is not a valid tzdata zone";
+    }
+    {
+      name = "keyboard-not-set";
+      # keyboard = null passes the type; the required-field assertion rejects.
+      cfg = withHost { keyboard = null; };
+      expect = "keyboard is required (PVE has no answer-file default)";
     }
   ];
 }
