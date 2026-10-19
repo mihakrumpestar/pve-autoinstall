@@ -99,9 +99,11 @@ Every rule in the tables above is enforced at evaluation; errors name the host a
 
 ## Passwords
 
-The password (plain or hash) is stored verbatim in the answer file and embedded in the ISO. Both live in the world-readable Nix store, and the CLI's `pve-result` out-links keep that copy alive until you delete them and run garbage collection. The CLI's `umask 077` only protects its output directory, not the store copy.
+> [!WARNING]
+> The password (plain or hash) is stored verbatim in the answer file and embedded in the ISO. Both live in the world-readable Nix store, and the CLI's `pve-result` out-links keep that copy alive until you delete them and run garbage collection. The CLI's `umask 077` only protects its output directory, not the store copy.
 
-Use `rootPasswordHashed` (`mkpasswd -m yescrypt` or `openssl passwd -6`): the plaintext then never enters the answer file, the ISO, or a shared binary cache. Set the plain `rootPassword` only for throwaway setups, and reset the root password after deployment either way. A real `config/default.nix` is gitignored and never committed; the example config carries only throwaway values.
+> [!TIP]
+> Use `rootPasswordHashed` (`mkpasswd -m yescrypt` or `openssl passwd -6`): the plaintext then never enters the answer file, the ISO, or a shared binary cache. Either way, reset the root password after deployment.
 
 ## CLI
 
