@@ -1,0 +1,70 @@
+name: Update deps
+
+# Weekly lock bump. Lock files only move forward, so the diff is the review.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-deps
+  cancel-in-progress: true
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: cachix/install-nix-action@v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            extra-substituters = https://devenv.cachix.org
+            extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
+
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-deps-${{ hashFiles('flake.lock', 'devenv.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-lint-
+          save: false
+
+      - name: Install devenv.sh
+        run: nix profile add nixpkgs#devenv
+
+      - name: Update locks
+        run: bash scripts/update-deps.sh
+
+      # Same gate as ci.yml: a PR opened with GITHUB_TOKEN queues its
+      # pull_request checks for approval instead of running them.
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: devenv --profile ci shell -- task ci
+
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          branch: chore/update-deps
+          delete-branch: true
+          draft: ${{ steps.lint.outcome == 'failure' }}
+          add-paths: |
+            flake.lock
+            devenv.lock
+          commit-message: "chore: update flake and devenv inputs"
+          title: "chore: update flake and devenv inputs"
+          body: |
+            Automated by `task update-deps`. `task ci`: **${{ steps.lint.outcome }}**.
+
+            No ISO builds here; `task verify` covers those.
+
+      - name: Fail on a failed gate
+        if: steps.lint.outcome == 'failure'
+        run: exit 1

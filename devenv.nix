@@ -13,6 +13,7 @@ let
     flake-checker
     go-task
     gitleaks
+    jq
     nixfmt-tree
     statix
   ];

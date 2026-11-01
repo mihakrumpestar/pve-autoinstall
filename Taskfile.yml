@@ -72,26 +72,16 @@ tasks:
         offline=$(nix eval --raw ".#checks.$system" \
           --apply "c: builtins.concatStringsSep \" \" (map (n: \".#checks.$system.\" + n) (builtins.filter (n: builtins.match \"pve-(answer-validates|iso-is-autoinstall)-.*\" n == null) (builtins.attrNames c)))")
         nix build --no-link $offline
-      - PVE_CLI="$(nix build --no-link --print-out-paths .#pve-autoinstall)/bin/pve-autoinstall" bats tests/cli.bats
+      - PVE_CLI="$(nix build --no-link --print-out-paths .#pve-autoinstall)/bin/pve-autoinstall" bats tests/*.bats
 
-  update-inputs:
-    desc: |
-      Update flake inputs. Can also update a specific input with:
-      task update-inputs -- <input-name>
+  update-deps:
+    desc: Bump flake.lock and devenv.lock; args go to nix flake update
     cmds:
-      - nix flake update --flake 'path:{{.ROOT_DIR}}' {{.CLI_ARGS}}
+      - bash scripts/update-deps.sh {{.CLI_ARGS}}
 
   update-iso:
     desc: |
-      Repin both PVE ISOs after a new release: set `version` in
-      lib/iso-pins.nix (one bump covers both arches), then run this task. It
-      derives both per-arch ISO URLs from the pin module, prefetches them and
-      prints the two sha256 SRI hashes for the `sha256` fields.
+      Repin lib/iso-pins.nix from the vendor SHA256SUMS (no ISO download).
+      `--version X` pins explicitly, `--dry-run` previews.
     cmds:
-      - |
-        # The trailing "\n" matters: `read` drops a last line without one.
-        nix eval --raw .#lib.pveIso --apply 'p: builtins.concatStringsSep "\n" (map (a: a + " " + p.urlFor a) (builtins.attrNames p.arches)) + "\n"' |
-        while read -r arch url; do
-          echo "# $arch $url"
-          nix store prefetch-file --json --hash-type sha256 "$url"
-        done
+      - bash scripts/update-iso-pins.sh {{.CLI_ARGS}}

@@ -10,6 +10,8 @@
 #
 #   PVE_CLI=/nix/store/...-pve-autoinstall/bin/pve-autoinstall bats tests/cli.bats
 
+bats_require_minimum_version 1.5.0
+
 setup() {
   if [ -z "${PVE_CLI:-}" ]; then
     skip "PVE_CLI is not set; build the CLI app and export its path"
@@ -95,7 +97,8 @@ setup() {
 }
 
 @test "--list prints exactly the config's host names" {
-  run "$CLI" --list "$CONFIG"
+  # stdout only: nix warnings on stderr must not be able to fail an exact match.
+  run --separate-stderr "$CLI" --list "$CONFIG"
   [ "$status" -eq 0 ]
   [ "$output" = $'pve01\npve02\npve03' ]
 }

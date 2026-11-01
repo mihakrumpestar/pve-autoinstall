@@ -1,16 +1,12 @@
-# Single source of truth for the pinned PVE installer ISOs: the release
-# version, the supported install-target arch set and the per-arch name/url/hash
-# derivation. Pure data plus tiny helpers, consumed by flake.nix (lib.pveIso),
-# modules/schema.nix (the arch enum) and packages/default.nix (per-host ISO
-# selection).
+# Pinned PVE installer ISOs: release version, per-arch suffix/sha256, and the
+# name/url/hash derivations. Consumed by flake.nix (lib.pveIso),
+# modules/schema.nix (arch enum) and packages/default.nix (ISO selection).
 #
-# Bump by editing `version` and the two `sha256` values together (one version
-# covers both arches): get the new releases from
-# https://www.proxmox.com/en/downloads, then `task update-iso` prefetches both
-# derived URLs and prints the hashes. Names and URLs are derived from `version`,
-# never written twice. Note: download.proxmox.com currently serves a
-# mismatching TLS cert, so the pin uses enterprise.proxmox.com (serves the
-# same ISOs, HTTP 200).
+# Hashes are the vendor's own (SHA256SUMS), so the pin cannot disagree with the
+# published image; `task update-iso` refreshes them.
+#
+# download.proxmox.com serves a mismatching TLS cert, so the pin uses
+# enterprise.proxmox.com (same ISOs).
 let
   version = "9.2-1";
   baseUrl = "https://enterprise.proxmox.com/iso";
@@ -27,14 +23,18 @@ let
     };
   };
 
-  isoNameFor = arch: "proxmox-ve_${version}${arches.${arch}.suffix}.iso";
-  urlFor = arch: "${baseUrl}/${isoNameFor arch}";
+  isoNameFor = version: arch: "proxmox-ve_${version}${arches.${arch}.suffix}.iso";
+  # Version-parameterized so update-iso-pins.sh can render candidate releases.
+  urlForVersion = version: arch: "${baseUrl}/${isoNameFor version arch}";
+  urlFor = urlForVersion version;
   hashFor = arch: arches.${arch}.sha256;
 in
 {
   inherit
     version
+    baseUrl
     arches
+    urlForVersion
     urlFor
     hashFor
     ;

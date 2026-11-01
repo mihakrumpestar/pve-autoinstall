@@ -1,0 +1,99 @@
+name: Update ISO pin
+
+# Daily PVE release watch. A current pin costs one SHA256SUMS fetch; a new
+# release opens a PR pinning it.
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "PVE release, e.g. 9.2-1 (empty: newest)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-iso
+  cancel-in-progress: true
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: cachix/install-nix-action@v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            extra-substituters = https://devenv.cachix.org
+            extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
+
+      # Restore-only: the ISOs are too big to cache in the 10 GB quota.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-iso-${{ hashFiles('flake.lock', 'lib/iso-pins.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-lint-
+          save: false
+
+      - name: Repin
+        id: repin
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          args=()
+          [[ -n $VERSION ]] && args=(--version "$VERSION")
+          nix shell nixpkgs#jq nixpkgs#curl -c bash scripts/update-iso-pins.sh "${args[@]}"
+          git diff --quiet -- lib/iso-pins.nix && echo "changed=false" >> "$GITHUB_OUTPUT" ||
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install devenv.sh
+        if: steps.repin.outputs.changed == 'true'
+        run: nix profile add nixpkgs#devenv
+
+      # Same gate as ci.yml: a PR opened with GITHUB_TOKEN queues its
+      # pull_request checks for approval instead of running them.
+      - name: Lint
+        if: steps.repin.outputs.changed == 'true'
+        run: devenv --profile ci shell -- task ci
+
+      # One host, not all: every host ISO is ~2 GB and would not fit the disk.
+      # This also downloads the pinned source ISO, so fetchurl checks the new
+      # hash against the real image here.
+      - name: PVE-tool checks
+        if: steps.repin.outputs.changed == 'true'
+        run: |
+          s=$(nix config show system)
+          h=$(nix eval --raw ".#checks.$s" --apply \
+            'c: builtins.head (builtins.filter (n: builtins.match "pve-iso-is-autoinstall-.*" n != null) (builtins.attrNames c))')
+          h=${h#pve-iso-is-autoinstall-}
+          nix build --no-link ".#checks.$s.pve-answer-validates-$h" ".#checks.$s.pve-iso-is-autoinstall-$h"
+
+      - name: Read pinned version
+        if: steps.repin.outputs.changed == 'true'
+        id: pin
+        run: echo "version=$(nix eval --raw .#lib.pveIso.version)" >> "$GITHUB_OUTPUT"
+
+      - uses: peter-evans/create-pull-request@v8.1.1
+        if: steps.repin.outputs.changed == 'true'
+        with:
+          branch: chore/update-iso-pin
+          delete-branch: true
+          add-paths: lib/iso-pins.nix
+          commit-message: "chore: pin PVE ISO ${{ steps.pin.outputs.version }}"
+          title: "chore: pin PVE ISO ${{ steps.pin.outputs.version }}"
+          body: |
+            Automated by `task update-iso`.
+
+            Hashes come straight from the vendor `SHA256SUMS`; the real image
+            is hash-checked by `fetchurl` when it is built. `task ci` and the
+            `validate-answer` / `inspect-iso` checks for one host passed here.
+            `task check` covers every host.

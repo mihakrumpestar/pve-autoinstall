@@ -194,21 +194,30 @@ nix flake check .            # validate-answer + inspect-iso per host, plus the 
 | `task ci` | Fast pre-commit gate (also the git hook): `gitleaks`, `treefmt`, `deadnix`, `statix`, `flake-checker`. No ISO builds. |
 | `task verify` | `ci` plus the heavy `nix flake check`. |
 | `task test` | Every check except the per-host `validate-answer`/`inspect-iso` ones, plus the CLI bats tests against the built CLI; no ISO builds. |
-| `task update-inputs` | Update flake inputs, or one input with `task update-inputs -- <name>`. |
-| `task update-iso` | Prefetch both pinned PVE ISOs and print their SRI hashes for `lib/iso-pins.nix`. |
+| `task update-deps` | Bump `flake.lock` and `devenv.lock` (`scripts/update-deps.sh`); args are input names: `task update-deps -- nixpkgs`. |
+| `task update-iso` | Repin `lib/iso-pins.nix` (`scripts/update-iso-pins.sh`): newest release from the vendor `SHA256SUMS`, hashes taken from that listing. `--version <release>` pins explicitly, `--dry-run` previews. |
 
-`nix flake check` runs the full check set listed under Flake outputs. The CLI's argument parsing is covered by bats tests in `tests/cli.bats`; `task test` builds `.#pve-autoinstall` and runs them (they skip without `PVE_CLI`).
+`nix flake check` runs the full check set listed under Flake outputs. The CLI's argument parsing is covered by bats tests in `tests/cli.bats`; `task test` builds `.#pve-autoinstall` and runs `tests/*.bats`.
 
 CI (`.github/workflows/ci.yml`) runs a single lint job on every push, pull request and manual dispatch: `task ci` under `devenv --profile ci shell`, so CI uses the same toolchain as local. Tests and ISO validation stay local (`task test`, `task check`, `task verify`) to keep CI fast. The job fails if `task ci` left the working tree dirty, so run `task ci` locally and commit the result.
 
-`devenv.nix` keeps the toolchain in one place: a ci tool group (`gitleaks`, `nixfmt-tree`, `deadnix`, `statix`, `flake-checker`, `go-task`, `bats`) and a pve tool group (`proxmox-auto-install-assistant`, `xorriso`) for manual answer/ISO work. A plain `devenv shell` includes both; the `ci` profile drops the pve group via a profile override, so CI realises a small, cacheable toolchain. On shell entry devenv installs a git pre-commit hook that runs `task ci` (made a no-op under the `ci` profile).
+Two scheduled workflows bump the pins. Each runs the same script as the task above, gates on `task ci` (plus one host's PVE checks for the ISO bump), and opens a PR touching only its lock/pin file. The gate runs inside the scheduled job because a PR opened with `GITHUB_TOKEN` queues its `pull_request` checks for manual approval instead of running them.
+
+| Workflow | Schedule | Effect |
+| --- | --- | --- |
+| `.github/workflows/update-deps.yml` | Mondays 04:17 UTC | Bumps both lock files, opens a PR (draft if the gate failed). |
+| `.github/workflows/update-iso.yml` | Daily 05:41 UTC | No-op while the pin is current; otherwise repins and opens a PR. Manual dispatch takes an optional release. |
+
+`devenv.nix` keeps the toolchain in one place: a ci tool group (`gitleaks`, `nixfmt-tree`, `deadnix`, `statix`, `flake-checker`, `go-task`, `bats`, `jq`) and a pve tool group (`proxmox-auto-install-assistant`, `xorriso`) for manual answer/ISO work. A plain `devenv shell` includes both; the `ci` profile drops the pve group via a profile override, so CI realises a small, cacheable toolchain. On shell entry devenv installs a git pre-commit hook that runs `task ci` (made a no-op under the `ci` profile).
 
 ## ISO pin
 
-The pinned ISOs live in [lib/iso-pins.nix](lib/iso-pins.nix) (exported as `lib.pveIso`): `version` plus one `sha256` per install-target arch (`arches`), with the ISO names and URLs derived from `version` (`proxmox-ve_<version>.iso`, `proxmox-ve_<version>-arm64.iso`). To bump:
+[lib/iso-pins.nix](lib/iso-pins.nix) (exported as `lib.pveIso`) holds `version` plus a per-arch `sha256`; names and URLs derive from `version`. To bump:
 
-1. Note the new release name from https://www.proxmox.com/en/downloads and set `version` (one bump covers both arches).
-2. Fetch and hash the new ISOs without trusting them: `task update-iso` prefetches both derived URLs and prints the `sha256` values (SRI form) to copy into `lib/iso-pins.nix` (manual: `nix store prefetch-file --json --hash-type sha256 <URL>`).
-3. Re-run `nix flake check`: the `validate-answer` and `inspect-iso` checks confirm the updated ISOs still embed the per-host answers.
+1. Run `task update-iso`: the newest release from the vendor `SHA256SUMS` that ships every pinned arch, with `version` and the `sha256` lines rewritten from that listing.
+2. `task update-iso -- --version <release>` pins explicitly; `--dry-run` previews.
+3. `nix flake check` then builds with the new hash, so a wrong pin fails there (the `fetchurl` hash must match the real ISO), and `validate-answer`/`inspect-iso` confirm the ISOs still take the per-host answers. The scheduled workflow runs one host's checks before its PR.
 
-The pin uses `enterprise.proxmox.com` because `download.proxmox.com` currently serves a mismatching TLS cert (same ISOs, HTTP 200).
+The script fetches one small `SHA256SUMS` file, never an ISO; `fetchurl` verifies the hash against the real image at build time. It exits 0 when the pin is current, and restores the original file if the rewrite does not evaluate as intended.
+
+The pin uses `enterprise.proxmox.com` because `download.proxmox.com` serves a mismatching TLS cert (same ISOs).
