@@ -1,7 +1,7 @@
 name: Update ISO pin
 
-# Daily PVE release watch. A current pin costs one SHA256SUMS fetch; a new
-# release opens a PR pinning it.
+# Daily PVE release watch. A current pin costs one SHA256SUMS fetch and pushes
+# nothing; a new release is committed to main once the gate passes.
 on:
   schedule:
     - cron: "41 5 * * *"
@@ -14,11 +14,10 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: update-iso
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   DO_NOT_TRACK: "1"
@@ -28,7 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      # Full history: the rebase in commit-push.sh must replay onto a moved main.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: cachix/install-nix-action@v31.11.3
         with:
@@ -59,8 +61,8 @@ jobs:
         if: steps.repin.outputs.changed == 'true'
         run: nix profile add nixpkgs#devenv
 
-      # Same gate as ci.yml: a PR opened with GITHUB_TOKEN queues its
-      # pull_request checks for approval instead of running them.
+      # Same gate as ci.yml. A GITHUB_TOKEN push does not trigger ci.yml, so
+      # nothing is committed unless this passes here.
       - name: Lint
         if: steps.repin.outputs.changed == 'true'
         run: devenv --profile ci shell -- task ci
@@ -82,18 +84,7 @@ jobs:
         id: pin
         run: echo "version=$(nix eval --raw .#lib.pveIso.version)" >> "$GITHUB_OUTPUT"
 
-      - uses: peter-evans/create-pull-request@v8.1.1
+      - name: Commit and push
         if: steps.repin.outputs.changed == 'true'
-        with:
-          branch: chore/update-iso-pin
-          delete-branch: true
-          add-paths: lib/iso-pins.nix
-          commit-message: "chore: pin PVE ISO ${{ steps.pin.outputs.version }}"
-          title: "chore: pin PVE ISO ${{ steps.pin.outputs.version }}"
-          body: |
-            Automated by `task update-iso`.
-
-            Hashes come straight from the vendor `SHA256SUMS`; the real image
-            is hash-checked by `fetchurl` when it is built. `task ci` and the
-            `validate-answer` / `inspect-iso` checks for one host passed here.
-            `task check` covers every host.
+        run: |
+          bash scripts/commit-push.sh "chore: pin PVE ISO ${{ steps.pin.outputs.version }}" lib/iso-pins.nix

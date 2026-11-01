@@ -201,12 +201,14 @@ nix flake check .            # validate-answer + inspect-iso per host, plus the 
 
 CI (`.github/workflows/ci.yml`) runs a single lint job on every push, pull request and manual dispatch: `task ci` under `devenv --profile ci shell`, so CI uses the same toolchain as local. Tests and ISO validation stay local (`task test`, `task check`, `task verify`) to keep CI fast. The job fails if `task ci` left the working tree dirty, so run `task ci` locally and commit the result.
 
-Two scheduled workflows bump the pins. Each runs the same script as the task above, gates on `task ci` (plus one host's PVE checks for the ISO bump), and opens a PR touching only its lock/pin file. The gate runs inside the scheduled job because a PR opened with `GITHUB_TOKEN` queues its `pull_request` checks for manual approval instead of running them.
+Two scheduled workflows bump the pins and commit straight to `main`. Each runs the same script as the task above and gates on `task ci` (plus one host's PVE checks for the ISO bump) before committing, because a `GITHUB_TOKEN` push does not trigger `ci.yml`. Nothing lands unless that gate passes; nothing needs approving.
 
 | Workflow | Schedule | Effect |
 | --- | --- | --- |
-| `.github/workflows/update-deps.yml` | Mondays 04:17 UTC | Bumps both lock files, opens a PR (draft if the gate failed). |
-| `.github/workflows/update-iso.yml` | Daily 05:41 UTC | No-op while the pin is current; otherwise repins and opens a PR. Manual dispatch takes an optional release. |
+| `.github/workflows/update-deps.yml` | Mondays 04:17 UTC | Bumps both lock files and commits them if `task ci` passes. |
+| `.github/workflows/update-iso.yml` | Daily 05:41 UTC | No-op while the pin is current; otherwise repins, gates, and commits. Manual dispatch takes an optional release. |
+
+Both commit through `scripts/commit-push.sh` (no-op when nothing changed, rebases onto a moving `main`).
 
 `devenv.nix` keeps the toolchain in one place: a ci tool group (`gitleaks`, `nixfmt-tree`, `deadnix`, `statix`, `flake-checker`, `go-task`, `bats`, `jq`) and a pve tool group (`proxmox-auto-install-assistant`, `xorriso`) for manual answer/ISO work. A plain `devenv shell` includes both; the `ci` profile drops the pve group via a profile override, so CI realises a small, cacheable toolchain. On shell entry devenv installs a git pre-commit hook that runs `task ci` (made a no-op under the `ci` profile).
 
@@ -216,7 +218,7 @@ Two scheduled workflows bump the pins. Each runs the same script as the task abo
 
 1. Run `task update-iso`: the newest release from the vendor `SHA256SUMS` that ships every pinned arch, with `version` and the `sha256` lines rewritten from that listing.
 2. `task update-iso -- --version <release>` pins explicitly; `--dry-run` previews.
-3. `nix flake check` then builds with the new hash, so a wrong pin fails there (the `fetchurl` hash must match the real ISO), and `validate-answer`/`inspect-iso` confirm the ISOs still take the per-host answers. The scheduled workflow runs one host's checks before its PR.
+3. `nix flake check` then builds with the new hash, so a wrong pin fails there (the `fetchurl` hash must match the real ISO), and `validate-answer`/`inspect-iso` confirm the ISOs still take the per-host answers. The scheduled workflow runs one host's checks before committing.
 
 The script fetches one small `SHA256SUMS` file, never an ISO; `fetchurl` verifies the hash against the real image at build time. It exits 0 when the pin is current, and restores the original file if the rewrite does not evaluate as intended.
 

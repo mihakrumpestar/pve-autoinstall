@@ -69,14 +69,14 @@ sums_hex() { # <sums-file> <version> <suffix>
 # Newest release with an ISO for every suffix in the arch table.
 sums_newest() { # <sums-file> <arch-table>
   local v s ok
-  for v in $(awk '{ print $2 }' "$1" |
-    sed -n 's/^proxmox-ve_\([0-9.]*-[0-9]*\)\(-.*\)\{0,1\}\.iso$/\1/p' | sort -uVr); do
+  while read -r v; do
     ok=1
     while IFS='|' read -r _ s _; do
       [[ -n $(sums_hex "$1" "$v" "$s") ]] || { ok=0; break; }
     done <"$2"
     (( ok )) && { printf '%s\n' "$v"; return; }
-  done
+  done < <(awk '{ print $2 }' "$1" |
+    sed -n 's/^proxmox-ve_\([0-9.]*-[0-9]*\)\(-.*\)\{0,1\}\.iso$/\1/p' | sort -uVr)
 }
 
 pin_json() {
