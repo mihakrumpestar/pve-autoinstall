@@ -8,18 +8,18 @@
 # download.proxmox.com serves a mismatching TLS cert, so the pin uses
 # enterprise.proxmox.com (same ISOs).
 let
-  version = "9.2-1";
+  version = "9.3-1";
   baseUrl = "https://enterprise.proxmox.com/iso";
 
   # Per install-target arch: ISO filename suffix and pinned sha256 (SRI form).
   arches = {
     x86_64 = {
       suffix = "";
-      sha256 = "sha256-Toj+QW35tSdiShdfJMmqB8cU0zMq+x7j2/OHlXPvLGw=";
+      sha256 = "sha256-zE/Je5rDpXEq1bZlGVdTVxkjoY4R9cLrsRP9wppQvTY=";
     };
     aarch64 = {
       suffix = "-arm64";
-      sha256 = "sha256-sWGdzR9bGm1n13tZ5+L6IDMXRVHR4bncIrIXHsCTq70=";
+      sha256 = "sha256-oJ+ss00vzJ9dFpqFtVsAh4R5KsTW4lkBOXhUJR7QqN4=";
     };
   };
 
